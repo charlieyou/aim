@@ -1,0 +1,7 @@
+# Binaries
+aim
+*.exe
+
+# IDE
+.idea/
+.vscode/
