@@ -293,8 +293,8 @@ func TestGeminiProvider_FetchUsage_MissingProjectID(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// File with token but no project_id - silently skipped as it doesn't match
-	// Gemini credential structure (could be from another provider)
+	// File with token but no project_id - should report a warning since it looks like
+	// a Gemini credential file but is malformed
 	cred := map[string]any{
 		"token": map[string]string{"access_token": "token1"},
 		// Missing project_id
@@ -315,17 +315,25 @@ func TestGeminiProvider_FetchUsage_MissingProjectID(t *testing.T) {
 		t.Fatalf("FetchUsage() error = %v", err)
 	}
 
-	// Invalid files are silently skipped, so we should get one warning about no valid creds
-	if len(rows) != 1 {
-		t.Fatalf("Expected 1 warning row, got %d", len(rows))
+	// Should get two warnings: one about the parse failure, one about no valid creds
+	if len(rows) != 2 {
+		t.Fatalf("Expected 2 warning rows, got %d", len(rows))
 	}
 
-	// Check that there's a warning about no valid credentials
+	// Check first warning is about parse failure
 	if !rows[0].IsWarning {
-		t.Error("Expected IsWarning = true")
+		t.Error("Expected rows[0].IsWarning = true")
 	}
-	if !contains(rows[0].WarningMsg, "No valid credential files") {
-		t.Errorf("Expected warning about no valid credentials, got: %s", rows[0].WarningMsg)
+	if !contains(rows[0].WarningMsg, "Failed to parse") || !contains(rows[0].WarningMsg, "missing project_id") {
+		t.Errorf("Expected warning about failed parse with missing project_id, got: %s", rows[0].WarningMsg)
+	}
+
+	// Check second warning is about no valid credentials
+	if !rows[1].IsWarning {
+		t.Error("Expected rows[1].IsWarning = true")
+	}
+	if !contains(rows[1].WarningMsg, "No valid credential files") {
+		t.Errorf("Expected warning about no valid credentials, got: %s", rows[1].WarningMsg)
 	}
 }
 
@@ -549,8 +557,10 @@ func TestGeminiProvider_FilePatternFiltering(t *testing.T) {
 	}
 
 	// Should have 1 data row from valid file only.
-	// Invalid files (noHyphen.json, something.txt, codex-*.json) are silently skipped
-	// as they don't match Gemini credential structure.
+	// Invalid files are silently skipped:
+	// - noHyphen.json: no hyphen in name (doesn't match *-*.json pattern)
+	// - something.txt: doesn't end with .json
+	// - codex-*.json: explicitly excluded as it's from another provider
 	if len(rows) != 1 {
 		t.Fatalf("Expected 1 row, got %d", len(rows))
 	}
