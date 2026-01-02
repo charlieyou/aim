@@ -36,6 +36,9 @@ func TestClaudeProvider_FetchUsage_Success(t *testing.T) {
 		if accept := r.Header.Get("Accept"); accept != "application/json" {
 			t.Errorf("expected Accept 'application/json', got %q", accept)
 		}
+		if ua := r.Header.Get("User-Agent"); ua != "ai-meter/0.1.0" {
+			t.Errorf("expected User-Agent 'ai-meter/0.1.0', got %q", ua)
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
