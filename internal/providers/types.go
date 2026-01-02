@@ -28,7 +28,7 @@ type ProviderError struct {
 	Err      error
 }
 
-func (e *ProviderError) Error() string {
+func (e ProviderError) Error() string {
 	if e.Err != nil {
 		return e.Provider + ": " + e.Message + ": " + e.Err.Error()
 	}
