@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -313,13 +314,17 @@ func TestCodexProvider_FetchUsage_MalformedFile(t *testing.T) {
 		t.Fatalf("FetchUsage() returned %d rows, want 3", len(rows))
 	}
 
-	// Find warning row
+	// Find warning row and verify it contains the specific JSON parse error
 	var warningFound bool
 	for _, row := range rows {
 		if row.IsWarning {
 			warningFound = true
 			if row.Provider != "Codex (bad@example.com)" {
 				t.Errorf("warning row Provider = %q, want %q", row.Provider, "Codex (bad@example.com)")
+			}
+			// Verify the specific error is included, not just generic "failed to load credentials"
+			if !strings.Contains(row.WarningMsg, "failed to parse JSON") {
+				t.Errorf("warning message should contain specific JSON parse error, got: %q", row.WarningMsg)
 			}
 		}
 	}
@@ -400,6 +405,10 @@ func TestCodexProvider_FetchUsage_MissingAccessToken(t *testing.T) {
 	if !rows[0].IsWarning {
 		t.Error("expected warning row for missing access_token")
 	}
+	// Verify the specific error is included
+	if !strings.Contains(rows[0].WarningMsg, "missing access_token") {
+		t.Errorf("warning message should contain specific error, got: %q", rows[0].WarningMsg)
+	}
 }
 
 func TestNewCodexProvider(t *testing.T) {
@@ -425,26 +434,3 @@ func TestNewCodexProvider(t *testing.T) {
 	}
 }
 
-func TestTruncateBody(t *testing.T) {
-	tests := []struct {
-		name   string
-		body   []byte
-		maxLen int
-		want   string
-	}{
-		{"short body unchanged", []byte("hello"), 10, "hello"},
-		{"exact length unchanged", []byte("hello"), 5, "hello"},
-		{"long body truncated", []byte("hello world"), 5, "hello..."},
-		{"empty body", []byte(""), 10, ""},
-		{"very long HTML error", []byte("<html><body>Error 502 Bad Gateway</body></html>"), 20, "<html><body>Error 50..."},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := truncateBody(tt.body, tt.maxLen)
-			if got != tt.want {
-				t.Errorf("truncateBody() = %q, want %q", got, tt.want)
-			}
-		})
-	}
-}

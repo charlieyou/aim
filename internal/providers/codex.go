@@ -14,8 +14,9 @@ import (
 
 // CodexAccount holds credentials for a single Codex account
 type CodexAccount struct {
-	Email string
-	Token string
+	Email   string
+	Token   string
+	LoadErr string // Error message from loading credentials, if any
 }
 
 // codexCredentials represents the JSON structure of credential files
@@ -111,11 +112,12 @@ func (c *CodexProvider) loadCredentials() ([]CodexAccount, error) {
 	for _, path := range matches {
 		account, err := c.loadCredentialFile(path)
 		if err != nil {
-			// Return a partial account with just the email so we can report the warning
+			// Return a partial account with email and error so we can report specific details
 			email := extractEmailFromFilename(filepath.Base(path))
 			accounts = append(accounts, CodexAccount{
-				Email: email,
-				Token: "", // Empty token signals a load error
+				Email:   email,
+				Token:   "", // Empty token signals a load error
+				LoadErr: err.Error(),
 			})
 			continue
 		}
@@ -158,19 +160,12 @@ func extractEmailFromFilename(filename string) string {
 	return name
 }
 
-// truncateBody truncates a byte slice to maxLen, appending "..." if truncated.
-// This prevents large API error responses from breaking table rendering.
-func truncateBody(body []byte, maxLen int) string {
-	s := string(body)
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
-}
-
 // fetchAccountUsage fetches usage for a single account
 func (c *CodexProvider) fetchAccountUsage(ctx context.Context, account CodexAccount) ([]UsageRow, error) {
 	if account.Token == "" {
+		if account.LoadErr != "" {
+			return nil, fmt.Errorf("failed to load credentials: %s", account.LoadErr)
+		}
 		return nil, fmt.Errorf("failed to load credentials")
 	}
 
@@ -191,7 +186,7 @@ func (c *CodexProvider) fetchAccountUsage(ctx context.Context, account CodexAcco
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, truncateBody(body, 200))
+		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, TruncateBody(body, 200))
 	}
 
 	var apiResp codexAPIResponse

@@ -45,3 +45,14 @@ func (e ProviderError) Error() string {
 func (e ProviderError) Unwrap() error {
 	return e.Err
 }
+
+// TruncateBody truncates a byte slice to maxLen, appending "..." if truncated.
+// This prevents large API error responses from breaking table rendering.
+// The truncation happens on the byte slice before string conversion to avoid
+// unnecessary allocations for large response bodies.
+func TruncateBody(body []byte, maxLen int) string {
+	if len(body) <= maxLen {
+		return string(body)
+	}
+	return string(body[:maxLen]) + "..."
+}

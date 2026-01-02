@@ -275,8 +275,8 @@ func (g *GeminiProvider) fetchAccountUsage(ctx context.Context, account GeminiAc
 
 // bucketToRow converts a quota bucket to a UsageRow
 func (g *GeminiProvider) bucketToRow(email string, bucket geminiQuotaBucket) (UsageRow, error) {
-	// Parse reset time (ISO 8601)
-	resetTime, err := time.Parse(time.RFC3339, bucket.ResetTime)
+	// Parse reset time (ISO 8601) - use RFC3339Nano to accept fractional seconds
+	resetTime, err := time.Parse(time.RFC3339Nano, bucket.ResetTime)
 	if err != nil {
 		return UsageRow{}, fmt.Errorf("invalid reset time format: %w", err)
 	}

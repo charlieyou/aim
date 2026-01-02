@@ -113,6 +113,72 @@ func TestGeminiProvider_FetchUsage_SingleAccount(t *testing.T) {
 	}
 }
 
+func TestGeminiProvider_FetchUsage_FractionalSeconds(t *testing.T) {
+	// Test that timestamps with fractional seconds (e.g. from API responses)
+	// are correctly parsed using RFC3339Nano format
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := geminiQuotaResponse{
+			Buckets: []geminiQuotaBucket{
+				{
+					ModelID:           "gemini-2.5-pro",
+					TokenType:         "REQUESTS",
+					RemainingFraction: 0.6,
+					ResetTime:         "2026-01-02T16:30:10.995545Z",
+				},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	tmpDir := t.TempDir()
+	credDir := filepath.Join(tmpDir, ".cli-proxy-api")
+	if err := os.MkdirAll(credDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	cred := map[string]any{
+		"token":      map[string]string{"access_token": "token"},
+		"project_id": "proj",
+	}
+	data, _ := json.Marshal(cred)
+	if err := os.WriteFile(filepath.Join(credDir, "user@test.com-proj.json"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	provider := &GeminiProvider{
+		homeDir: tmpDir,
+		baseURL: server.URL,
+		client:  &http.Client{Timeout: 5 * time.Second},
+	}
+
+	rows, err := provider.FetchUsage(context.Background())
+	if err != nil {
+		t.Fatalf("FetchUsage() error = %v", err)
+	}
+
+	if len(rows) != 1 {
+		t.Fatalf("Expected 1 row, got %d", len(rows))
+	}
+
+	row := rows[0]
+	if row.IsWarning {
+		t.Errorf("Expected data row, got warning: %s", row.WarningMsg)
+	}
+
+	// Verify the fractional seconds timestamp was parsed correctly
+	expectedTime, _ := time.Parse(time.RFC3339Nano, "2026-01-02T16:30:10.995545Z")
+	if !row.ResetTime.Equal(expectedTime) {
+		t.Errorf("ResetTime = %v, want %v", row.ResetTime, expectedTime)
+	}
+
+	// 0.6 remaining = 40% used
+	if row.UsagePercent != 40.0 {
+		t.Errorf("UsagePercent = %v, want %v", row.UsagePercent, 40.0)
+	}
+}
+
 func TestGeminiProvider_FetchUsage_MultipleBuckets(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := geminiQuotaResponse{
