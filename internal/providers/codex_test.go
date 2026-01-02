@@ -121,15 +121,39 @@ func TestCodexProvider_FetchUsage_SingleAccount(t *testing.T) {
 }
 
 func TestCodexProvider_FetchUsage_MultipleAccounts(t *testing.T) {
+	// Define expected usage percentages per account
+	accountData := map[string]struct {
+		primary   float64
+		secondary float64
+	}{
+		"token-alice@example.com": {primary: 30.0, secondary: 15.0},
+		"token-bob@example.com":   {primary: 60.0, secondary: 25.0},
+	}
+
 	callCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		callCount++
+
+		// Extract token from Authorization header to return account-specific data
+		auth := r.Header.Get("Authorization")
+		token := ""
+		if len(auth) > 7 && auth[:7] == "Bearer " {
+			token = auth[7:]
+		}
+
+		data, ok := accountData[token]
+		if !ok {
+			t.Errorf("unexpected token: %s", token)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
 		resp := codexAPIResponse{
 			PlanType: "pro",
 		}
-		resp.RateLimit.PrimaryWindow.UsedPercent = float64(callCount * 10)
+		resp.RateLimit.PrimaryWindow.UsedPercent = data.primary
 		resp.RateLimit.PrimaryWindow.ResetAt = time.Now().Unix()
-		resp.RateLimit.SecondaryWindow.UsedPercent = float64(callCount * 5)
+		resp.RateLimit.SecondaryWindow.UsedPercent = data.secondary
 		resp.RateLimit.SecondaryWindow.ResetAt = time.Now().Unix()
 
 		w.Header().Set("Content-Type", "application/json")
@@ -169,6 +193,47 @@ func TestCodexProvider_FetchUsage_MultipleAccounts(t *testing.T) {
 
 	if callCount != 2 {
 		t.Errorf("API called %d times, want 2", callCount)
+	}
+
+	// Verify each account's data is correctly associated
+	// Build a map of provider -> rows for easier verification
+	rowsByProvider := make(map[string][]UsageRow)
+	for _, row := range rows {
+		rowsByProvider[row.Provider] = append(rowsByProvider[row.Provider], row)
+	}
+
+	// Verify Alice's data
+	aliceRows, ok := rowsByProvider["Codex (alice@example.com)"]
+	if !ok {
+		t.Fatal("missing rows for alice@example.com")
+	}
+	if len(aliceRows) != 2 {
+		t.Fatalf("alice has %d rows, want 2", len(aliceRows))
+	}
+	for _, row := range aliceRows {
+		if row.Label == "5-hour" && row.UsagePercent != 30.0 {
+			t.Errorf("alice 5-hour UsagePercent = %f, want 30.0", row.UsagePercent)
+		}
+		if row.Label == "7-day" && row.UsagePercent != 15.0 {
+			t.Errorf("alice 7-day UsagePercent = %f, want 15.0", row.UsagePercent)
+		}
+	}
+
+	// Verify Bob's data
+	bobRows, ok := rowsByProvider["Codex (bob@example.com)"]
+	if !ok {
+		t.Fatal("missing rows for bob@example.com")
+	}
+	if len(bobRows) != 2 {
+		t.Fatalf("bob has %d rows, want 2", len(bobRows))
+	}
+	for _, row := range bobRows {
+		if row.Label == "5-hour" && row.UsagePercent != 60.0 {
+			t.Errorf("bob 5-hour UsagePercent = %f, want 60.0", row.UsagePercent)
+		}
+		if row.Label == "7-day" && row.UsagePercent != 25.0 {
+			t.Errorf("bob 7-day UsagePercent = %f, want 25.0", row.UsagePercent)
+		}
 	}
 }
 
