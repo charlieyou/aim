@@ -7,7 +7,7 @@ import (
 
 // FormatResetTime formats a reset time for display.
 // - If <24h from now: "in Xh Ym" (relative)
-// - If >=24h from now: "Mon D HH:MM TZ" (absolute in local time)
+// - If >=24h from now: "Jan D HH:MM TZ" (absolute in local time)
 // - If zero time: "-"
 // - If in the past: "expired"
 func FormatResetTime(t time.Time) string {

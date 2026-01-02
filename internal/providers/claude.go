@@ -150,7 +150,7 @@ func (c *ClaudeProvider) parseUsageResponse(resp *claudeUsageResponse) []UsageRo
 	var rows []UsageRow
 
 	if resp.FiveHour != nil {
-		resetTime, err := time.Parse(time.RFC3339, resp.FiveHour.ResetsAt)
+		resetTime, err := time.Parse(time.RFC3339Nano, resp.FiveHour.ResetsAt)
 		if err != nil {
 			rows = append(rows, UsageRow{
 				Provider:   c.Name(),
@@ -169,7 +169,7 @@ func (c *ClaudeProvider) parseUsageResponse(resp *claudeUsageResponse) []UsageRo
 	}
 
 	if resp.SevenDay != nil {
-		resetTime, err := time.Parse(time.RFC3339, resp.SevenDay.ResetsAt)
+		resetTime, err := time.Parse(time.RFC3339Nano, resp.SevenDay.ResetsAt)
 		if err != nil {
 			rows = append(rows, UsageRow{
 				Provider:   c.Name(),
