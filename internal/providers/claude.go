@@ -11,10 +11,10 @@ import (
 )
 
 const (
-	claudeDefaultBaseURL = "https://api.anthropic.com"
-	claudeAPIPath        = "/api/oauth/usage"
-	claudeAntropicBeta   = "oauth-2025-04-20"
-	claudeTimeout        = 30 * time.Second
+	claudeDefaultBaseURL  = "https://api.anthropic.com"
+	claudeAPIPath         = "/api/oauth/usage"
+	claudeAnthropicBeta   = "oauth-2025-04-20"
+	claudeTimeout         = 30 * time.Second
 )
 
 // ClaudeProvider implements the Provider interface for Claude (Anthropic)
@@ -85,7 +85,7 @@ func (c *ClaudeProvider) FetchUsage(ctx context.Context) ([]UsageRow, error) {
 		}}, nil
 	}
 
-	return c.parseUsageResponse(resp)
+	return c.parseUsageResponse(resp), nil
 }
 
 // loadCredentials loads the access token from the credentials file
@@ -123,7 +123,7 @@ func (c *ClaudeProvider) fetchUsageFromAPI(ctx context.Context, token string) (*
 
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("anthropic-beta", claudeAntropicBeta)
+	req.Header.Set("anthropic-beta", claudeAnthropicBeta)
 
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -144,34 +144,46 @@ func (c *ClaudeProvider) fetchUsageFromAPI(ctx context.Context, token string) (*
 }
 
 // parseUsageResponse converts the API response to UsageRows
-func (c *ClaudeProvider) parseUsageResponse(resp *claudeUsageResponse) ([]UsageRow, error) {
+func (c *ClaudeProvider) parseUsageResponse(resp *claudeUsageResponse) []UsageRow {
 	var rows []UsageRow
 
 	if resp.FiveHour != nil {
 		resetTime, err := time.Parse(time.RFC3339, resp.FiveHour.ResetsAt)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse five_hour reset time: %w", err)
+			rows = append(rows, UsageRow{
+				Provider:   c.Name(),
+				Label:      "5-hour",
+				IsWarning:  true,
+				WarningMsg: fmt.Sprintf("Parse error: invalid reset time format: %v", err),
+			})
+		} else {
+			rows = append(rows, UsageRow{
+				Provider:     c.Name(),
+				Label:        "5-hour",
+				UsagePercent: resp.FiveHour.Utilization,
+				ResetTime:    resetTime,
+			})
 		}
-		rows = append(rows, UsageRow{
-			Provider:     c.Name(),
-			Label:        "5-hour",
-			UsagePercent: resp.FiveHour.Utilization,
-			ResetTime:    resetTime,
-		})
 	}
 
 	if resp.SevenDay != nil {
 		resetTime, err := time.Parse(time.RFC3339, resp.SevenDay.ResetsAt)
 		if err != nil {
-			return nil, fmt.Errorf("failed to parse seven_day reset time: %w", err)
+			rows = append(rows, UsageRow{
+				Provider:   c.Name(),
+				Label:      "7-day",
+				IsWarning:  true,
+				WarningMsg: fmt.Sprintf("Parse error: invalid reset time format: %v", err),
+			})
+		} else {
+			rows = append(rows, UsageRow{
+				Provider:     c.Name(),
+				Label:        "7-day",
+				UsagePercent: resp.SevenDay.Utilization,
+				ResetTime:    resetTime,
+			})
 		}
-		rows = append(rows, UsageRow{
-			Provider:     c.Name(),
-			Label:        "7-day",
-			UsagePercent: resp.SevenDay.Utilization,
-			ResetTime:    resetTime,
-		})
 	}
 
-	return rows, nil
+	return rows
 }

@@ -47,7 +47,7 @@ func TestGeminiProvider_FetchUsage_SingleAccount(t *testing.T) {
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer server.Close()
 
@@ -128,20 +128,24 @@ func TestGeminiProvider_FetchUsage_MultipleBuckets(t *testing.T) {
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer server.Close()
 
 	tmpDir := t.TempDir()
 	credDir := filepath.Join(tmpDir, ".cli-proxy-api")
-	os.MkdirAll(credDir, 0755)
+	if err := os.MkdirAll(credDir, 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	cred := map[string]any{
 		"token":      map[string]string{"access_token": "token1"},
 		"project_id": "proj-1",
 	}
 	credData, _ := json.Marshal(cred)
-	os.WriteFile(filepath.Join(credDir, "alice@test.com-proj-1.json"), credData, 0600)
+	if err := os.WriteFile(filepath.Join(credDir, "alice@test.com-proj-1.json"), credData, 0600); err != nil {
+		t.Fatal(err)
+	}
 
 	provider := &GeminiProvider{
 		homeDir: tmpDir,
@@ -191,13 +195,15 @@ func TestGeminiProvider_FetchUsage_MultipleAccounts(t *testing.T) {
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer server.Close()
 
 	tmpDir := t.TempDir()
 	credDir := filepath.Join(tmpDir, ".cli-proxy-api")
-	os.MkdirAll(credDir, 0755)
+	if err := os.MkdirAll(credDir, 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Two accounts
 	cred1 := map[string]any{
@@ -210,8 +216,12 @@ func TestGeminiProvider_FetchUsage_MultipleAccounts(t *testing.T) {
 	}
 	data1, _ := json.Marshal(cred1)
 	data2, _ := json.Marshal(cred2)
-	os.WriteFile(filepath.Join(credDir, "alice@test.com-proj-1.json"), data1, 0600)
-	os.WriteFile(filepath.Join(credDir, "bob@test.com-proj-2.json"), data2, 0600)
+	if err := os.WriteFile(filepath.Join(credDir, "alice@test.com-proj-1.json"), data1, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(credDir, "bob@test.com-proj-2.json"), data2, 0600); err != nil {
+		t.Fatal(err)
+	}
 
 	provider := &GeminiProvider{
 		homeDir: tmpDir,
@@ -279,15 +289,20 @@ func TestGeminiProvider_FetchUsage_NoCreds(t *testing.T) {
 func TestGeminiProvider_FetchUsage_MissingProjectID(t *testing.T) {
 	tmpDir := t.TempDir()
 	credDir := filepath.Join(tmpDir, ".cli-proxy-api")
-	os.MkdirAll(credDir, 0755)
+	if err := os.MkdirAll(credDir, 0755); err != nil {
+		t.Fatal(err)
+	}
 
-	// File with token but no project_id
+	// File with token but no project_id - silently skipped as it doesn't match
+	// Gemini credential structure (could be from another provider)
 	cred := map[string]any{
 		"token": map[string]string{"access_token": "token1"},
 		// Missing project_id
 	}
 	data, _ := json.Marshal(cred)
-	os.WriteFile(filepath.Join(credDir, "user@example.com-proj.json"), data, 0600)
+	if err := os.WriteFile(filepath.Join(credDir, "user@example.com-proj.json"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
 
 	provider := &GeminiProvider{
 		homeDir: tmpDir,
@@ -300,29 +315,17 @@ func TestGeminiProvider_FetchUsage_MissingProjectID(t *testing.T) {
 		t.Fatalf("FetchUsage() error = %v", err)
 	}
 
-	// Should have 2 warnings: one for skipped file, one for no valid creds
-	if len(rows) < 1 {
-		t.Fatalf("Expected at least 1 warning row, got %d", len(rows))
+	// Invalid files are silently skipped, so we should get one warning about no valid creds
+	if len(rows) != 1 {
+		t.Fatalf("Expected 1 warning row, got %d", len(rows))
 	}
 
-	// Check that there's a warning about missing project_id
-	foundMissingProjectWarning := false
-	foundNoCredsWarning := false
-	for _, row := range rows {
-		if row.IsWarning {
-			if contains(row.WarningMsg, "missing project_id") {
-				foundMissingProjectWarning = true
-			}
-			if contains(row.WarningMsg, "No valid credential files") {
-				foundNoCredsWarning = true
-			}
-		}
+	// Check that there's a warning about no valid credentials
+	if !rows[0].IsWarning {
+		t.Error("Expected IsWarning = true")
 	}
-	if !foundMissingProjectWarning {
-		t.Error("Expected warning about missing project_id")
-	}
-	if !foundNoCredsWarning {
-		t.Error("Expected warning about no valid credentials")
+	if !contains(rows[0].WarningMsg, "No valid credential files") {
+		t.Errorf("Expected warning about no valid credentials, got: %s", rows[0].WarningMsg)
 	}
 }
 
@@ -354,20 +357,24 @@ func TestGeminiProvider_RemainingFractionConversion(t *testing.T) {
 					},
 				}
 				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(resp)
+				_ = json.NewEncoder(w).Encode(resp)
 			}))
 			defer server.Close()
 
 			tmpDir := t.TempDir()
 			credDir := filepath.Join(tmpDir, ".cli-proxy-api")
-			os.MkdirAll(credDir, 0755)
+			if err := os.MkdirAll(credDir, 0755); err != nil {
+				t.Fatal(err)
+			}
 
 			cred := map[string]any{
 				"token":      map[string]string{"access_token": "token"},
 				"project_id": "proj",
 			}
 			data, _ := json.Marshal(cred)
-			os.WriteFile(filepath.Join(credDir, "user@test.com-proj.json"), data, 0600)
+			if err := os.WriteFile(filepath.Join(credDir, "user@test.com-proj.json"), data, 0600); err != nil {
+				t.Fatal(err)
+			}
 
 			provider := &GeminiProvider{
 				homeDir: tmpDir,
@@ -397,20 +404,24 @@ func TestGeminiProvider_EmptyBuckets(t *testing.T) {
 			Buckets: []geminiQuotaBucket{}, // Empty array
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer server.Close()
 
 	tmpDir := t.TempDir()
 	credDir := filepath.Join(tmpDir, ".cli-proxy-api")
-	os.MkdirAll(credDir, 0755)
+	if err := os.MkdirAll(credDir, 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	cred := map[string]any{
 		"token":      map[string]string{"access_token": "token"},
 		"project_id": "proj",
 	}
 	data, _ := json.Marshal(cred)
-	os.WriteFile(filepath.Join(credDir, "user@test.com-proj.json"), data, 0600)
+	if err := os.WriteFile(filepath.Join(credDir, "user@test.com-proj.json"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
 
 	provider := &GeminiProvider{
 		homeDir: tmpDir,
@@ -438,20 +449,24 @@ func TestGeminiProvider_EmptyBuckets(t *testing.T) {
 func TestGeminiProvider_FetchUsage_APIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte(`{"error":"invalid token"}`))
+		_, _ = w.Write([]byte(`{"error":"invalid token"}`))
 	}))
 	defer server.Close()
 
 	tmpDir := t.TempDir()
 	credDir := filepath.Join(tmpDir, ".cli-proxy-api")
-	os.MkdirAll(credDir, 0755)
+	if err := os.MkdirAll(credDir, 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	cred := map[string]any{
 		"token":      map[string]string{"access_token": "bad-token"},
 		"project_id": "proj",
 	}
 	data, _ := json.Marshal(cred)
-	os.WriteFile(filepath.Join(credDir, "user@test.com-proj.json"), data, 0600)
+	if err := os.WriteFile(filepath.Join(credDir, "user@test.com-proj.json"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
 
 	provider := &GeminiProvider{
 		homeDir: tmpDir,
@@ -479,7 +494,9 @@ func TestGeminiProvider_FetchUsage_APIError(t *testing.T) {
 func TestGeminiProvider_FilePatternFiltering(t *testing.T) {
 	tmpDir := t.TempDir()
 	credDir := filepath.Join(tmpDir, ".cli-proxy-api")
-	os.MkdirAll(credDir, 0755)
+	if err := os.MkdirAll(credDir, 0755); err != nil {
+		t.Fatal(err)
+	}
 
 	// Valid file (matches *-*.json pattern)
 	validCred := map[string]any{
@@ -487,14 +504,22 @@ func TestGeminiProvider_FilePatternFiltering(t *testing.T) {
 		"project_id": "proj",
 	}
 	validData, _ := json.Marshal(validCred)
-	os.WriteFile(filepath.Join(credDir, "user@test.com-proj.json"), validData, 0600)
+	if err := os.WriteFile(filepath.Join(credDir, "user@test.com-proj.json"), validData, 0600); err != nil {
+		t.Fatal(err)
+	}
 
 	// Invalid files that should be skipped
-	os.WriteFile(filepath.Join(credDir, "noHyphen.json"), validData, 0600) // No hyphen
-	os.WriteFile(filepath.Join(credDir, "something.txt"), validData, 0600) // Not .json
-	os.WriteFile(filepath.Join(credDir, "codex-user@test.com.json"), []byte(`{
+	if err := os.WriteFile(filepath.Join(credDir, "noHyphen.json"), validData, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(credDir, "something.txt"), validData, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(credDir, "codex-user@test.com.json"), []byte(`{
 		"access_token": "token"
-	}`), 0600) // Codex format, matches pattern but missing project_id
+	}`), 0600); err != nil {
+		t.Fatal(err)
+	}
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := geminiQuotaResponse{
@@ -508,7 +533,7 @@ func TestGeminiProvider_FilePatternFiltering(t *testing.T) {
 			},
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer server.Close()
 
@@ -523,22 +548,18 @@ func TestGeminiProvider_FilePatternFiltering(t *testing.T) {
 		t.Fatalf("FetchUsage() error = %v", err)
 	}
 
-	// Should have 1 data row (from valid file) plus 1 warning (from codex file missing project_id)
-	dataRows := 0
-	warningRows := 0
-	for _, row := range rows {
-		if row.IsWarning {
-			warningRows++
-		} else {
-			dataRows++
-		}
+	// Should have 1 data row from valid file only.
+	// Invalid files (noHyphen.json, something.txt, codex-*.json) are silently skipped
+	// as they don't match Gemini credential structure.
+	if len(rows) != 1 {
+		t.Fatalf("Expected 1 row, got %d", len(rows))
 	}
 
-	if dataRows != 1 {
-		t.Errorf("Expected 1 data row, got %d", dataRows)
+	if rows[0].IsWarning {
+		t.Errorf("Expected data row, got warning: %s", rows[0].WarningMsg)
 	}
-	if warningRows != 1 {
-		t.Errorf("Expected 1 warning row, got %d", warningRows)
+	if rows[0].Provider != "Gemini (user@test.com)" {
+		t.Errorf("Provider = %q, want %q", rows[0].Provider, "Gemini (user@test.com)")
 	}
 }
 
@@ -566,20 +587,24 @@ func TestGeminiProvider_EmailExtraction(t *testing.T) {
 					},
 				}
 				w.Header().Set("Content-Type", "application/json")
-				json.NewEncoder(w).Encode(resp)
+				_ = json.NewEncoder(w).Encode(resp)
 			}))
 			defer server.Close()
 
 			tmpDir := t.TempDir()
 			credDir := filepath.Join(tmpDir, ".cli-proxy-api")
-			os.MkdirAll(credDir, 0755)
+			if err := os.MkdirAll(credDir, 0755); err != nil {
+				t.Fatal(err)
+			}
 
 			cred := map[string]any{
 				"token":      map[string]string{"access_token": "token"},
 				"project_id": tt.projectID,
 			}
 			data, _ := json.Marshal(cred)
-			os.WriteFile(filepath.Join(credDir, tt.filename), data, 0600)
+			if err := os.WriteFile(filepath.Join(credDir, tt.filename), data, 0600); err != nil {
+				t.Fatal(err)
+			}
 
 			provider := &GeminiProvider{
 				homeDir: tmpDir,

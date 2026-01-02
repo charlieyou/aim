@@ -158,6 +158,16 @@ func extractEmailFromFilename(filename string) string {
 	return name
 }
 
+// truncateBody truncates a byte slice to maxLen, appending "..." if truncated.
+// This prevents large API error responses from breaking table rendering.
+func truncateBody(body []byte, maxLen int) string {
+	s := string(body)
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
+}
+
 // fetchAccountUsage fetches usage for a single account
 func (c *CodexProvider) fetchAccountUsage(ctx context.Context, account CodexAccount) ([]UsageRow, error) {
 	if account.Token == "" {
@@ -181,7 +191,7 @@ func (c *CodexProvider) fetchAccountUsage(ctx context.Context, account CodexAcco
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, truncateBody(body, 200))
 	}
 
 	var apiResp codexAPIResponse

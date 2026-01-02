@@ -32,7 +32,10 @@ func formatResetTimeFrom(t, now time.Time) string {
 		if hours > 0 {
 			return fmt.Sprintf("in %dh %dm", hours, minutes)
 		}
-		return fmt.Sprintf("in %dm", minutes)
+		if minutes > 0 {
+			return fmt.Sprintf("in %dm", minutes)
+		}
+		return "in <1m"
 	}
 
 	// Use local timezone

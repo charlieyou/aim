@@ -156,7 +156,8 @@ func (g *GeminiProvider) loadCredentials() ([]GeminiAccount, []string) {
 		filePath := filepath.Join(credDir, name)
 		account, err := g.parseCredFile(filePath, baseName)
 		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("Skipping %s: %v", name, err))
+			// Silently skip files that don't match Gemini credential structure
+			// (e.g., codex-user.json from other providers)
 			continue
 		}
 

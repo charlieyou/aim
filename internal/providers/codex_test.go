@@ -62,7 +62,7 @@ func TestCodexProvider_FetchUsage_SingleAccount(t *testing.T) {
 		resp.RateLimit.SecondaryWindow.ResetAt = resetTime + 86400
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer server.Close()
 
@@ -133,7 +133,7 @@ func TestCodexProvider_FetchUsage_MultipleAccounts(t *testing.T) {
 		resp.RateLimit.SecondaryWindow.ResetAt = time.Now().Unix()
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer server.Close()
 
@@ -210,7 +210,7 @@ func TestCodexProvider_FetchUsage_MalformedFile(t *testing.T) {
 		resp.RateLimit.SecondaryWindow.UsedPercent = 5
 		resp.RateLimit.SecondaryWindow.ResetAt = time.Now().Unix()
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp)
 	}))
 	defer server.Close()
 
@@ -266,7 +266,7 @@ func TestCodexProvider_FetchUsage_MalformedFile(t *testing.T) {
 func TestCodexProvider_FetchUsage_APIError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte("unauthorized"))
+		_, _ = w.Write([]byte("unauthorized"))
 	}))
 	defer server.Close()
 

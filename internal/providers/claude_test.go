@@ -30,8 +30,8 @@ func TestClaudeProvider_FetchUsage_Success(t *testing.T) {
 		if auth := r.Header.Get("Authorization"); auth != "Bearer test-token" {
 			t.Errorf("expected Authorization 'Bearer test-token', got %q", auth)
 		}
-		if beta := r.Header.Get("anthropic-beta"); beta != claudeAntropicBeta {
-			t.Errorf("expected anthropic-beta %q, got %q", claudeAntropicBeta, beta)
+		if beta := r.Header.Get("anthropic-beta"); beta != claudeAnthropicBeta {
+			t.Errorf("expected anthropic-beta %q, got %q", claudeAnthropicBeta, beta)
 		}
 		if accept := r.Header.Get("Accept"); accept != "application/json" {
 			t.Errorf("expected Accept 'application/json', got %q", accept)
