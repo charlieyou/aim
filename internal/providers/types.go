@@ -29,10 +29,16 @@ type ProviderError struct {
 }
 
 func (e ProviderError) Error() string {
-	if e.Err != nil {
+	switch {
+	case e.Message != "" && e.Err != nil:
 		return e.Provider + ": " + e.Message + ": " + e.Err.Error()
+	case e.Message != "":
+		return e.Provider + ": " + e.Message
+	case e.Err != nil:
+		return e.Provider + ": " + e.Err.Error()
+	default:
+		return e.Provider + ": unknown error"
 	}
-	return e.Provider + ": " + e.Message
 }
 
 // Unwrap returns the underlying error, enabling errors.Is and errors.As
