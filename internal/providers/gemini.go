@@ -221,6 +221,7 @@ func (g *GeminiProvider) fetchAccountUsage(ctx context.Context, account GeminiAc
 
 	req.Header.Set("Authorization", "Bearer "+account.Token)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "gemini-cli/0.1.0")
 
 	// Execute request
 	resp, err := g.client.Do(req)
