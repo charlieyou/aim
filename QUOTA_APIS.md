@@ -163,29 +163,129 @@ refresh_token={refreshToken}
 
 ## Gemini (Google)
 
-Gemini does **not** have a proactive quota endpoint. Quota information is only available from 429 error responses.
+**Gemini CLI does have a proactive quota API when using Login with Google (Code Assist / OAuth).**
+The CLI calls `retrieveUserQuota` on the Code Assist private API and shows the
+results in `/stats` and the model dialog. For API key / Vertex auth, there is
+no proactive quota API and `/stats` shows local session usage only.
+
+### Quota Endpoint (OAuth / Code Assist)
+```
+POST https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota
+```
+
+### Quota Request Body
+```json
+{
+  "project": "{project_id}"
+}
+```
+`userAgent` may also be included by the client.
+
+### Quota Response (shape)
+```json
+{
+  "buckets": [
+    {
+      "modelId": "gemini-2.5-pro",
+      "tokenType": "REQUESTS",
+      "remainingFraction": 0.75,
+      "resetTime": "2025-10-22T16:01:15Z"
+    }
+  ]
+}
+```
+
+### How to replicate (verify from the installed CLI)
+1. Locate the installed gemini CLI entrypoint:
+   ```
+   which gemini
+   ```
+   (On this system it points to `.../@google/gemini-cli/dist/index.js`.)
+2. Find the quota call in the core package:
+   ```
+   rg -n "retrieveUserQuota" /usr/lib/node_modules/@google/gemini-cli/node_modules/@google/gemini-cli-core/dist/src -S
+   ```
+   Open `code_assist/server.js` to see the endpoint and POST method.
+3. Confirm `/stats` triggers the quota refresh:
+   ```
+   rg -n "refreshUserQuota" /usr/lib/node_modules/@google/gemini-cli/dist/src -S
+   ```
+   Open `ui/commands/statsCommand.js` to see the call to `config.refreshUserQuota()`.
+4. Confirm the UI renders `remainingFraction` + `resetTime` in the stats table:
+   ```
+   rg -n "remainingFraction|resetTime" /usr/lib/node_modules/@google/gemini-cli/dist/src/ui/components/StatsDisplay.js -S
+   ```
+5. Run the CLI with Login with Google and type `/stats` to see usage left and reset times.
 
 ### Generation Endpoint
 ```
-POST https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse
 POST https://cloudcode-pa.googleapis.com/v1internal:generateContent
+POST https://cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse
 ```
 
 ### Headers
 ```
 Authorization: Bearer {accessToken}
 Content-Type: application/json
-User-Agent: google-api-nodejs-client/9.15.1
-X-Goog-Api-Client: gl-node/22.17.0
-Client-Metadata: ideType=IDE_UNSPECIFIED,platform=PLATFORM_UNSPECIFIED,pluginType=GEMINI
+User-Agent: gemini-cli/0.1.0
 ```
 
-### 429 Error Response Format
+### Request Body Format
+**Important**: Uses a wrapper structure with `request` field:
+```json
+{
+  "model": "gemini-2.5-pro",
+  "project": "{project_id}",
+  "request": {
+    "contents": [
+      {
+        "role": "user",
+        "parts": [{ "text": "Your prompt here" }]
+      }
+    ]
+  }
+}
+```
+
+### Success Response Format
+```json
+{
+  "response": {
+    "candidates": [
+      {
+        "content": {
+          "role": "model",
+          "parts": [{ "text": "Response text" }]
+        },
+        "finishReason": "STOP",
+        "avgLogprobs": -0.679
+      }
+    ],
+    "usageMetadata": {
+      "promptTokenCount": 10,
+      "candidatesTokenCount": 517,
+      "totalTokenCount": 1774,
+      "trafficType": "PROVISIONED_THROUGHPUT",
+      "thoughtsTokenCount": 1247
+    },
+    "modelVersion": "gemini-2.5-pro",
+    "createTime": "2026-01-02T16:30:10.995545Z",
+    "responseId": "kvJXadnhPOrbsbwPq-zyAQ"
+  },
+  "traceId": "b7a62d82f821c360"
+}
+```
+
+### 429 Error Response Format (Actual)
+Two variants observed - some include retry info, some don't:
+
+**With retry info:**
 ```json
 {
   "error": {
     "code": 429,
     "message": "You have exhausted your capacity on this model. Your quota will reset after 0s.",
+    "status": "RESOURCE_EXHAUSTED",
     "details": [
       {
         "@type": "type.googleapis.com/google.rpc.ErrorInfo",
@@ -194,13 +294,35 @@ Client-Metadata: ideType=IDE_UNSPECIFIED,platform=PLATFORM_UNSPECIFIED,pluginTyp
         "metadata": {
           "uiMessage": "true",
           "model": "gemini-2.5-pro",
-          "quotaResetDelay": "539.477544ms",
-          "quotaResetTimeStamp": "2025-10-20T19:14:08Z"
+          "quotaResetDelay": "976.066617ms",
+          "quotaResetTimeStamp": "2026-01-02T16:30:12Z"
         }
       },
       {
         "@type": "type.googleapis.com/google.rpc.RetryInfo",
-        "retryDelay": "0.539477544s"
+        "retryDelay": "0.976066617s"
+      }
+    ]
+  }
+}
+```
+
+**Without retry info (minimal):**
+```json
+{
+  "error": {
+    "code": 429,
+    "message": "You have exhausted your capacity on this model. Your quota will reset after 0s.",
+    "status": "RESOURCE_EXHAUSTED",
+    "details": [
+      {
+        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+        "reason": "RATE_LIMIT_EXCEEDED",
+        "domain": "cloudcode-pa.googleapis.com",
+        "metadata": {
+          "uiMessage": "true",
+          "model": "gemini-2.5-pro"
+        }
       }
     ]
   }
@@ -210,11 +332,14 @@ Client-Metadata: ideType=IDE_UNSPECIFIED,platform=PLATFORM_UNSPECIFIED,pluginTyp
 ### Fields
 | Field | Description |
 |-------|-------------|
-| `error.details[].retryDelay` | Time to wait before retry (e.g., `"0.847655010s"`) |
-| `error.details[].metadata.quotaResetDelay` | Alternative format (e.g., `"373.801628ms"`) |
+| `error.status` | `"RESOURCE_EXHAUSTED"` |
+| `error.details[].reason` | `"RATE_LIMIT_EXCEEDED"` |
+| `error.details[].metadata.model` | Model that hit the limit |
+| `error.details[].metadata.quotaResetDelay` | Time until reset (e.g., `"976.066617ms"`) |
 | `error.details[].metadata.quotaResetTimeStamp` | ISO timestamp when quota resets |
-| `error.details[].reason` | `"RATE_LIMIT_EXCEEDED"` (retryable) or `"QUOTA_EXHAUSTED"` (terminal) |
-| `error.message` | May contain: `"Your quota will reset after 600s."` |
+| `error.details[].retryDelay` | Time to wait (e.g., `"0.976066617s"`) - may be absent |
+
+**Note**: The `quotaResetDelay`, `quotaResetTimeStamp`, and `retryDelay` fields are NOT always present. Some 429 responses only contain the minimal metadata with `uiMessage` and `model`.
 
 ### Subscription Info Endpoint
 ```
@@ -283,10 +408,10 @@ client_id={clientId}&client_secret={clientSecret}&refresh_token={refreshToken}&g
 |----------|---------------|--------|-------------|
 | Claude | `api.anthropic.com/api/oauth/usage` | GET | `Bearer {token}` + `anthropic-beta: oauth-2025-04-20` |
 | Codex | `chatgpt.com/backend-api/wham/usage` | GET | `Bearer {token}` |
-| Gemini | N/A (from 429 errors only) | - | `Bearer {token}` |
+| Gemini (OAuth / Code Assist) | `cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota` | POST | `Bearer {token}` |
 
 | Provider | Windows | Reset Info Format |
 |----------|---------|-------------------|
 | Claude | 5-hour, 7-day, per-model | ISO 8601 timestamp |
 | Codex | 5-hour (18000s), 7-day (604800s) | Unix timestamp |
-| Gemini | Variable | Seconds string or ISO timestamp |
+| Gemini | Daily (per-model buckets) | ISO 8601 timestamp |
