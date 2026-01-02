@@ -44,6 +44,16 @@ func TestFormatResetTime_Relative(t *testing.T) {
 			duration: 5 * time.Minute,
 			want:     "in 5m",
 		},
+		{
+			name:     "30 seconds from now",
+			duration: 30 * time.Second,
+			want:     "in <1m",
+		},
+		{
+			name:     "1 second from now",
+			duration: 1 * time.Second,
+			want:     "in <1m",
+		},
 	}
 
 	for _, tt := range tests {

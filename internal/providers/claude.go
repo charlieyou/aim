@@ -11,10 +11,10 @@ import (
 )
 
 const (
-	claudeDefaultBaseURL  = "https://api.anthropic.com"
-	claudeAPIPath         = "/api/oauth/usage"
-	claudeAnthropicBeta   = "oauth-2025-04-20"
-	claudeTimeout         = 30 * time.Second
+	claudeDefaultBaseURL = "https://api.anthropic.com"
+	claudeAPIPath        = "/api/oauth/usage"
+	claudeAnthropicBeta  = "oauth-2025-04-20"
+	claudeTimeout        = 30 * time.Second
 )
 
 // ClaudeProvider implements the Provider interface for Claude (Anthropic)
