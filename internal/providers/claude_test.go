@@ -316,6 +316,73 @@ func TestClaudeProvider_FetchUsage_APIError500(t *testing.T) {
 	}
 }
 
+func TestClaudeProvider_FetchUsage_MalformedTimestamp(t *testing.T) {
+	// Create mock server that returns invalid timestamps
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{
+			"five_hour": {
+				"utilization": 24.0,
+				"resets_at": "not-a-valid-timestamp"
+			},
+			"seven_day": {
+				"utilization": 36.0,
+				"resets_at": "2026-01-08T06:59:59+00:00"
+			}
+		}`))
+	}))
+	defer server.Close()
+
+	// Create temp credentials
+	tempDir := t.TempDir()
+	claudeDir := filepath.Join(tempDir, ".claude")
+	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	credsPath := filepath.Join(claudeDir, ".credentials.json")
+	credsJSON := `{"claudeAiOauth": {"accessToken": "test-token", "expiresAt": 1767396165210}}`
+	if err := os.WriteFile(credsPath, []byte(credsJSON), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &ClaudeProvider{
+		homeDir: tempDir,
+		baseURL: server.URL,
+		client:  &http.Client{Timeout: 5 * time.Second},
+	}
+
+	rows, err := p.FetchUsage(context.Background())
+	if err != nil {
+		t.Fatalf("FetchUsage() error = %v", err)
+	}
+
+	// Should return 2 rows: 1 warning for malformed timestamp, 1 data row for valid entry
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(rows))
+	}
+
+	// First row should be a warning about parse error
+	if !rows[0].IsWarning {
+		t.Error("row[0].IsWarning = false, want true")
+	}
+	if rows[0].Label != "5-hour" {
+		t.Errorf("row[0].Label = %q, want %q", rows[0].Label, "5-hour")
+	}
+
+	// Second row should be valid data
+	if rows[1].IsWarning {
+		t.Error("row[1].IsWarning = true, want false")
+	}
+	if rows[1].Label != "7-day" {
+		t.Errorf("row[1].Label = %q, want %q", rows[1].Label, "7-day")
+	}
+	if rows[1].UsagePercent != 36.0 {
+		t.Errorf("row[1].UsagePercent = %f, want %f", rows[1].UsagePercent, 36.0)
+	}
+}
+
 func TestNewClaudeProvider(t *testing.T) {
 	p, err := NewClaudeProvider()
 	if err != nil {
