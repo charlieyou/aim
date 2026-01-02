@@ -221,7 +221,7 @@ func (g *GeminiProvider) fetchAccountUsage(ctx context.Context, account GeminiAc
 
 	req.Header.Set("Authorization", "Bearer "+account.Token)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "gemini-cli/0.1.0")
+	req.Header.Set("User-Agent", "ai-meter/0.1.0")
 
 	// Execute request
 	resp, err := g.client.Do(req)
@@ -236,7 +236,7 @@ func (g *GeminiProvider) fetchAccountUsage(ctx context.Context, account GeminiAc
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, truncateBody(body, 200))
+		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, TruncateBody(body, 200))
 	}
 
 	// Parse response

@@ -124,6 +124,7 @@ func (c *ClaudeProvider) fetchUsageFromAPI(ctx context.Context, token string) (*
 
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "ai-meter/0.1.0")
 	req.Header.Set("anthropic-beta", claudeAnthropicBeta)
 
 	resp, err := c.client.Do(req)
@@ -134,7 +135,7 @@ func (c *ClaudeProvider) fetchUsageFromAPI(ctx context.Context, token string) (*
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, truncateBody(body, 200))
+		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, TruncateBody(body, 200))
 	}
 
 	var usageResp claudeUsageResponse

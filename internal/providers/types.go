@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"time"
+	"unicode/utf8"
 )
 
 // UsageRow represents a single row in the output table
@@ -46,13 +47,23 @@ func (e ProviderError) Unwrap() error {
 	return e.Err
 }
 
-// TruncateBody truncates a byte slice to maxLen, appending "..." if truncated.
+// TruncateBody truncates a byte slice to maxLen bytes, appending "..." if truncated.
 // This prevents large API error responses from breaking table rendering.
-// The truncation happens on the byte slice before string conversion to avoid
-// unnecessary allocations for large response bodies.
+// The truncation is UTF-8 safe: it backs off to the last complete rune boundary
+// to avoid producing invalid UTF-8 strings.
 func TruncateBody(body []byte, maxLen int) string {
 	if len(body) <= maxLen {
 		return string(body)
 	}
-	return string(body[:maxLen]) + "..."
+	// Walk through runes and find the last complete rune that fits within maxLen
+	end := 0
+	for end < maxLen {
+		_, size := utf8.DecodeRune(body[end:])
+		if end+size > maxLen {
+			// This rune would exceed maxLen, stop here
+			break
+		}
+		end += size
+	}
+	return string(body[:end]) + "..."
 }

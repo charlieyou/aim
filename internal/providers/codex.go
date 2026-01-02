@@ -177,6 +177,7 @@ func (c *CodexProvider) fetchAccountUsage(ctx context.Context, account CodexAcco
 
 	req.Header.Set("Authorization", "Bearer "+account.Token)
 	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "ai-meter/0.1.0")
 
 	resp, err := c.client.Do(req)
 	if err != nil {
