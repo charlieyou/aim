@@ -35,6 +35,9 @@ func TestGeminiProvider_FetchUsage_SingleAccount(t *testing.T) {
 		if r.Header.Get("Content-Type") != "application/json" {
 			t.Errorf("Expected Content-Type application/json, got %s", r.Header.Get("Content-Type"))
 		}
+		if r.Header.Get("User-Agent") != "gemini-cli/0.1.0" {
+			t.Errorf("Expected User-Agent gemini-cli/0.1.0, got %s", r.Header.Get("User-Agent"))
+		}
 
 		// Return mock response
 		resp := geminiQuotaResponse{
