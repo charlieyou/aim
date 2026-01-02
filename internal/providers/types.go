@@ -34,3 +34,8 @@ func (e ProviderError) Error() string {
 	}
 	return e.Provider + ": " + e.Message
 }
+
+// Unwrap returns the underlying error, enabling errors.Is and errors.As
+func (e ProviderError) Unwrap() error {
+	return e.Err
+}
