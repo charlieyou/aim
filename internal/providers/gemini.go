@@ -236,7 +236,7 @@ func (g *GeminiProvider) fetchAccountUsage(ctx context.Context, account GeminiAc
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, truncateBody(body, 200))
 	}
 
 	// Parse response

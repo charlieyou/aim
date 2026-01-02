@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -324,7 +325,7 @@ func TestGeminiProvider_FetchUsage_MissingProjectID(t *testing.T) {
 	if !rows[0].IsWarning {
 		t.Error("Expected rows[0].IsWarning = true")
 	}
-	if !contains(rows[0].WarningMsg, "Failed to parse") || !contains(rows[0].WarningMsg, "missing project_id") {
+	if !strings.Contains(rows[0].WarningMsg, "Failed to parse") || !strings.Contains(rows[0].WarningMsg, "missing project_id") {
 		t.Errorf("Expected warning about failed parse with missing project_id, got: %s", rows[0].WarningMsg)
 	}
 
@@ -332,7 +333,7 @@ func TestGeminiProvider_FetchUsage_MissingProjectID(t *testing.T) {
 	if !rows[1].IsWarning {
 		t.Error("Expected rows[1].IsWarning = true")
 	}
-	if !contains(rows[1].WarningMsg, "No valid credential files") {
+	if !strings.Contains(rows[1].WarningMsg, "No valid credential files") {
 		t.Errorf("Expected warning about no valid credentials, got: %s", rows[1].WarningMsg)
 	}
 }
@@ -449,7 +450,7 @@ func TestGeminiProvider_EmptyBuckets(t *testing.T) {
 	if !rows[0].IsWarning {
 		t.Error("Expected IsWarning = true")
 	}
-	if !contains(rows[0].WarningMsg, "Empty buckets") {
+	if !strings.Contains(rows[0].WarningMsg, "Empty buckets") {
 		t.Errorf("Expected warning about empty buckets, got: %s", rows[0].WarningMsg)
 	}
 }
@@ -494,7 +495,7 @@ func TestGeminiProvider_FetchUsage_APIError(t *testing.T) {
 	if !rows[0].IsWarning {
 		t.Error("Expected IsWarning = true")
 	}
-	if !contains(rows[0].WarningMsg, "API error") {
+	if !strings.Contains(rows[0].WarningMsg, "API error") {
 		t.Errorf("Expected API error warning, got: %s", rows[0].WarningMsg)
 	}
 }
@@ -657,18 +658,4 @@ func TestNewGeminiProvider(t *testing.T) {
 	if p.homeDir == "" {
 		t.Error("homeDir should not be empty")
 	}
-}
-
-// contains checks if substr is in s
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
-}
-
-func containsHelper(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
