@@ -145,6 +145,11 @@ func (g *GeminiProvider) loadCredentials() ([]GeminiAccount, []string) {
 			continue
 		}
 
+		// Skip files from other providers (e.g., codex-user@example.com.json)
+		if strings.HasPrefix(name, "codex-") {
+			continue
+		}
+
 		// Check for the pattern: must have at least one hyphen before .json
 		baseName := strings.TrimSuffix(name, ".json")
 		lastHyphenIdx := strings.LastIndex(baseName, "-")
@@ -156,8 +161,8 @@ func (g *GeminiProvider) loadCredentials() ([]GeminiAccount, []string) {
 		filePath := filepath.Join(credDir, name)
 		account, err := g.parseCredFile(filePath, baseName)
 		if err != nil {
-			// Silently skip files that don't match Gemini credential structure
-			// (e.g., codex-user.json from other providers)
+			// Report warning for files that look like Gemini credentials but fail to parse
+			warnings = append(warnings, fmt.Sprintf("Failed to parse %s: %v", name, err))
 			continue
 		}
 
