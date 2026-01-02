@@ -1,3 +1,3 @@
-module ai-meter
+module github.com/cyou/aim
 
-go 1.25.5
+go 1.22
