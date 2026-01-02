@@ -267,8 +267,9 @@ func TestClaudeProvider_FetchUsage_APIError(t *testing.T) {
 	if rows[0].Provider != "Claude" {
 		t.Errorf("row[0].Provider = %q, want %q", rows[0].Provider, "Claude")
 	}
-	if rows[0].WarningMsg != "API returned status 401" {
-		t.Errorf("row[0].WarningMsg = %q, want %q", rows[0].WarningMsg, "API returned status 401")
+	expectedMsg := `API returned status 401: {"error": "unauthorized"}`
+	if rows[0].WarningMsg != expectedMsg {
+		t.Errorf("row[0].WarningMsg = %q, want %q", rows[0].WarningMsg, expectedMsg)
 	}
 }
 
@@ -311,8 +312,9 @@ func TestClaudeProvider_FetchUsage_APIError500(t *testing.T) {
 	if !rows[0].IsWarning {
 		t.Error("row[0].IsWarning = false, want true")
 	}
-	if rows[0].WarningMsg != "API returned status 500" {
-		t.Errorf("row[0].WarningMsg = %q, want %q", rows[0].WarningMsg, "API returned status 500")
+	expectedMsg := `API returned status 500: {"error": "internal server error"}`
+	if rows[0].WarningMsg != expectedMsg {
+		t.Errorf("row[0].WarningMsg = %q, want %q", rows[0].WarningMsg, expectedMsg)
 	}
 }
 
