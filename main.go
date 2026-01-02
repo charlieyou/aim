@@ -44,13 +44,22 @@ func main() {
 		}
 
 		wg.Add(1)
-		go func(p providers.Provider) {
+		go func(p providers.Provider, name string) {
 			defer wg.Done()
-			rows, _ := p.FetchUsage(ctx) // Errors are returned as warning rows
+			rows, err := p.FetchUsage(ctx)
 			mu.Lock()
-			allRows = append(allRows, rows...)
+			if err != nil {
+				// FetchUsage failed - add warning row
+				allRows = append(allRows, providers.UsageRow{
+					Provider:   name,
+					IsWarning:  true,
+					WarningMsg: err.Error(),
+				})
+			} else {
+				allRows = append(allRows, rows...)
+			}
 			mu.Unlock()
-		}(provider)
+		}(provider, pf.name)
 	}
 
 	wg.Wait()
@@ -59,7 +68,6 @@ func main() {
 	sortRows(allRows)
 
 	output.RenderTable(allRows, os.Stdout)
-	os.Exit(0)
 }
 
 // sortRows sorts usage rows by:
@@ -84,14 +92,23 @@ func sortRows(rows []providers.UsageRow) {
 		return provider
 	}
 
+	// getOrder returns the sort order for a provider prefix.
+	// Unknown providers get a high value to sort after known ones.
+	getOrder := func(prefix string) int {
+		if order, ok := providerOrder[prefix]; ok {
+			return order
+		}
+		return len(providerOrder) // Unknown providers sort last
+	}
+
 	sort.SliceStable(rows, func(i, j int) bool {
 		// Get provider prefixes
 		prefixI := getProviderPrefix(rows[i].Provider)
 		prefixJ := getProviderPrefix(rows[j].Provider)
 
 		// Primary: Provider order
-		orderI := providerOrder[prefixI]
-		orderJ := providerOrder[prefixJ]
+		orderI := getOrder(prefixI)
+		orderJ := getOrder(prefixJ)
 		if orderI != orderJ {
 			return orderI < orderJ
 		}
