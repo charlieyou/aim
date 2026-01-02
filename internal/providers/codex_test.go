@@ -211,13 +211,20 @@ func TestCodexProvider_FetchUsage_MultipleAccounts(t *testing.T) {
 	if len(aliceRows) != 2 {
 		t.Fatalf("alice has %d rows, want 2", len(aliceRows))
 	}
+	aliceExpected := map[string]float64{"5-hour": 30.0, "7-day": 15.0}
 	for _, row := range aliceRows {
-		if row.Label == "5-hour" && row.UsagePercent != 30.0 {
-			t.Errorf("alice 5-hour UsagePercent = %f, want 30.0", row.UsagePercent)
+		want, ok := aliceExpected[row.Label]
+		if !ok {
+			t.Errorf("alice has unexpected label %q", row.Label)
+			continue
 		}
-		if row.Label == "7-day" && row.UsagePercent != 15.0 {
-			t.Errorf("alice 7-day UsagePercent = %f, want 15.0", row.UsagePercent)
+		if row.UsagePercent != want {
+			t.Errorf("alice %s UsagePercent = %f, want %f", row.Label, row.UsagePercent, want)
 		}
+		delete(aliceExpected, row.Label)
+	}
+	for label := range aliceExpected {
+		t.Errorf("alice missing expected label %q", label)
 	}
 
 	// Verify Bob's data
@@ -228,13 +235,20 @@ func TestCodexProvider_FetchUsage_MultipleAccounts(t *testing.T) {
 	if len(bobRows) != 2 {
 		t.Fatalf("bob has %d rows, want 2", len(bobRows))
 	}
+	bobExpected := map[string]float64{"5-hour": 60.0, "7-day": 25.0}
 	for _, row := range bobRows {
-		if row.Label == "5-hour" && row.UsagePercent != 60.0 {
-			t.Errorf("bob 5-hour UsagePercent = %f, want 60.0", row.UsagePercent)
+		want, ok := bobExpected[row.Label]
+		if !ok {
+			t.Errorf("bob has unexpected label %q", row.Label)
+			continue
 		}
-		if row.Label == "7-day" && row.UsagePercent != 25.0 {
-			t.Errorf("bob 7-day UsagePercent = %f, want 25.0", row.UsagePercent)
+		if row.UsagePercent != want {
+			t.Errorf("bob %s UsagePercent = %f, want %f", row.Label, row.UsagePercent, want)
 		}
+		delete(bobExpected, row.Label)
+	}
+	for label := range bobExpected {
+		t.Errorf("bob missing expected label %q", label)
 	}
 }
 
