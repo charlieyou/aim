@@ -15,7 +15,7 @@ This tool is intended for use with [CLI Proxy API](https://github.com/router-for
 ## Installation
 
 ```bash
-go install github.com/cyou/aim@latest
+go install github.com/charlieyou/aim@latest
 ```
 
 Or build from source (static binary with no runtime dependencies):

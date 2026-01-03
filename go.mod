@@ -1,4 +1,4 @@
-module github.com/cyou/aim
+module github.com/charlieyou/aim
 
 go 1.24.0
 
