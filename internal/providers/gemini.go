@@ -153,6 +153,11 @@ type nativeGeminiCred struct {
 // Returns an account with LoadErr set if parsing fails, allowing the caller to
 // report a single account-specific warning row.
 func (g *GeminiProvider) loadNativeCredentials() []GeminiAccount {
+	// Guard against empty homeDir to avoid scanning current directory in CI/sandbox
+	if g.homeDir == "" {
+		return nil
+	}
+
 	credPath := filepath.Join(g.homeDir, ".gemini", "oauth_creds.json")
 
 	data, err := os.ReadFile(credPath)

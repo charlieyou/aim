@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/cyou/aim/internal/providers"
+	"github.com/charlieyou/aim/internal/providers"
 )
 
 func TestFilterRows_ShowOld(t *testing.T) {

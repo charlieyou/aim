@@ -231,6 +231,11 @@ type nativeOAuth struct {
 
 // loadNativeCredentials loads credentials from ~/.claude/.credentials.json.
 func (c *ClaudeProvider) loadNativeCredentials() ([]claudeAuth, error) {
+	// Guard against empty homeDir to avoid scanning current directory in CI/sandbox
+	if c.homeDir == "" {
+		return nil, nil
+	}
+
 	credsPath := filepath.Join(c.homeDir, ".claude", ".credentials.json")
 
 	data, err := os.ReadFile(credsPath)
@@ -292,16 +297,23 @@ func (c *ClaudeProvider) fetchAccountUsage(ctx context.Context, account claudeAu
 		if errors.As(err, &statusErr) {
 			claudeDebugf("usage API status=%d body=%q", statusErr.StatusCode, redactTokens(statusErr.Body))
 		}
-		if errors.As(err, &statusErr) && account.RefreshToken != "" &&
+		if errors.As(err, &statusErr) &&
 			(statusErr.StatusCode == http.StatusUnauthorized || statusErr.StatusCode == http.StatusForbidden) {
-			claudeDebugf("attempting token refresh after status=%d", statusErr.StatusCode)
-			refreshedToken, refreshErr := c.refreshAccessToken(ctx, account)
-			if refreshErr == nil {
-				claudeDebugf("token refresh succeeded, retrying usage API")
-				resp, err = c.fetchUsageFromAPI(ctx, refreshedToken)
-			} else {
-				claudeDebugf("token refresh failed: %v", refreshErr)
-				err = refreshErr
+			// For native credentials, always return the re-auth message on 401/403
+			if account.IsNative {
+				return nil, fmt.Errorf("token expired. Re-authenticate with claude to refresh")
+			}
+			// For proxy credentials, attempt refresh if we have a refresh token
+			if account.RefreshToken != "" {
+				claudeDebugf("attempting token refresh after status=%d", statusErr.StatusCode)
+				refreshedToken, refreshErr := c.refreshAccessToken(ctx, account)
+				if refreshErr == nil {
+					claudeDebugf("token refresh succeeded, retrying usage API")
+					resp, err = c.fetchUsageFromAPI(ctx, refreshedToken)
+				} else {
+					claudeDebugf("token refresh failed: %v", refreshErr)
+					err = refreshErr
+				}
 			}
 		}
 	}

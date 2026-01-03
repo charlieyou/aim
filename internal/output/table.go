@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cyou/aim/internal/providers"
+	"github.com/charlieyou/aim/internal/providers"
 	"golang.org/x/term"
 )
 

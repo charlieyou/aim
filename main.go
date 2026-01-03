@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cyou/aim/internal/output"
-	"github.com/cyou/aim/internal/providers"
+	"github.com/charlieyou/aim/internal/output"
+	"github.com/charlieyou/aim/internal/providers"
 )
 
 func main() {

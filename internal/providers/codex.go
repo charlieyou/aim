@@ -184,6 +184,11 @@ type codexNativeCredentials struct {
 
 // loadNativeCredentials loads credentials from ~/.codex/auth.json
 func (c *CodexProvider) loadNativeCredentials() ([]CodexAccount, error) {
+	// Guard against empty homeDir to avoid scanning current directory in CI/sandbox
+	if c.homeDir == "" {
+		return nil, nil
+	}
+
 	path := filepath.Join(c.homeDir, ".codex", "auth.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -381,16 +386,23 @@ func (c *CodexProvider) fetchAccountUsage(ctx context.Context, account CodexAcco
 	apiResp, err := c.fetchUsageWithToken(ctx, account.Token)
 	if err != nil {
 		var statusErr APIStatusError
-		if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusUnauthorized && account.RefreshToken != "" {
-			debugf("Codex", "attempting token refresh after status=%d for %s", statusErr.StatusCode, codexProviderName(account))
-			refreshed, refreshErr := c.refreshAccessToken(ctx, account)
-			if refreshErr != nil {
-				debugf("Codex", "token refresh failed for %s: %v", codexProviderName(account), refreshErr)
-				return nil, refreshErr
+		if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusUnauthorized {
+			// For native credentials, always return the re-auth message on 401
+			if account.IsNative {
+				return nil, fmt.Errorf("token expired. Re-authenticate with codex to refresh")
 			}
-			debugf("Codex", "token refresh succeeded, retrying usage API for %s", codexProviderName(account))
-			account.Token = refreshed
-			apiResp, err = c.fetchUsageWithToken(ctx, refreshed)
+			// For proxy credentials, attempt refresh if we have a refresh token
+			if account.RefreshToken != "" {
+				debugf("Codex", "attempting token refresh after status=%d for %s", statusErr.StatusCode, codexProviderName(account))
+				refreshed, refreshErr := c.refreshAccessToken(ctx, account)
+				if refreshErr != nil {
+					debugf("Codex", "token refresh failed for %s: %v", codexProviderName(account), refreshErr)
+					return nil, refreshErr
+				}
+				debugf("Codex", "token refresh succeeded, retrying usage API for %s", codexProviderName(account))
+				account.Token = refreshed
+				apiResp, err = c.fetchUsageWithToken(ctx, refreshed)
+			}
 		}
 	}
 	if err != nil {
