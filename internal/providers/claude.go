@@ -56,7 +56,9 @@ type claudeAuth struct {
 	ExpiresAt      time.Time
 	Scopes         []string
 	Email          string
+	SourceName     string
 	CredentialPath string
+	LoadErr        string
 }
 
 // claudeUsageResponse represents the API response
@@ -102,7 +104,7 @@ func (c *ClaudeProvider) Name() string {
 
 // FetchUsage fetches usage data from the Claude API
 func (c *ClaudeProvider) FetchUsage(ctx context.Context) ([]UsageRow, error) {
-	creds, err := c.loadCredentials()
+	accounts, err := c.loadCredentials()
 	if err != nil {
 		return []UsageRow{{
 			Provider:   c.Name(),
@@ -111,27 +113,124 @@ func (c *ClaudeProvider) FetchUsage(ctx context.Context) ([]UsageRow, error) {
 		}}, nil
 	}
 
-	providerName := claudeProviderName(creds)
-
-	token, err := c.accessTokenForCredentials(ctx, creds)
-	if err != nil {
+	if len(accounts) == 0 {
 		return []UsageRow{{
-			Provider:   providerName,
+			Provider:   c.Name(),
 			IsWarning:  true,
-			WarningMsg: claudeWarningMessage(err),
+			WarningMsg: fmt.Sprintf("No credential files found matching %s", filepath.Join(c.homeDir, ".cli-proxy-api", "claude-*.json")),
 		}}, nil
 	}
 
-	resp, err := c.fetchUsageFromAPI(ctx, token)
+	var rows []UsageRow
+	for _, account := range accounts {
+		accountRows, err := c.fetchAccountUsage(ctx, account)
+		if err != nil {
+			rows = append(rows, UsageRow{
+				Provider:   claudeProviderName(account),
+				IsWarning:  true,
+				WarningMsg: claudeWarningMessage(err),
+			})
+			continue
+		}
+		rows = append(rows, accountRows...)
+	}
+
+	return rows, nil
+}
+
+// loadCredentials loads the access token from the credentials file
+func (c *ClaudeProvider) loadCredentials() ([]claudeAuth, error) {
+	pattern := filepath.Join(c.homeDir, ".cli-proxy-api", "claude-*.json")
+
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return nil, fmt.Errorf("failed to glob credentials: %w", err)
+	}
+
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("No credential files found matching %s", pattern)
+	}
+
+	sort.Strings(matches)
+
+	accounts := make([]claudeAuth, 0, len(matches))
+	for _, credsPath := range matches {
+		account, err := c.loadCredentialFile(credsPath)
+		if err != nil {
+			sourceName := extractClaudeEmailFromFilename(filepath.Base(credsPath))
+			accounts = append(accounts, claudeAuth{
+				Email:          sourceName,
+				SourceName:     sourceName,
+				CredentialPath: credsPath,
+				LoadErr:        err.Error(),
+			})
+			continue
+		}
+		accounts = append(accounts, account)
+	}
+
+	return accounts, nil
+}
+
+func (c *ClaudeProvider) loadCredentialFile(credsPath string) (claudeAuth, error) {
+	data, err := os.ReadFile(credsPath)
+	if err != nil {
+		return claudeAuth{}, fmt.Errorf("failed to read credentials file %s: %w", credsPath, err)
+	}
+
+	var creds claudeCredentials
+	if err := json.Unmarshal(data, &creds); err != nil {
+		return claudeAuth{}, fmt.Errorf("failed to parse credentials file %s: %w", credsPath, err)
+	}
+
+	if creds.Type != "" && creds.Type != "claude" {
+		return claudeAuth{}, fmt.Errorf("unexpected credential type %q in %s", creds.Type, credsPath)
+	}
+
+	if creds.AccessToken == "" {
+		return claudeAuth{}, fmt.Errorf("no access token found in credentials")
+	}
+
+	sourceName := extractClaudeEmailFromFilename(filepath.Base(credsPath))
+	email := creds.Email
+	if email == "" {
+		email = sourceName
+	}
+
+	return claudeAuth{
+		AccessToken:    creds.AccessToken,
+		RefreshToken:   creds.RefreshToken,
+		Email:          email,
+		SourceName:     sourceName,
+		CredentialPath: credsPath,
+	}, nil
+}
+
+func (c *ClaudeProvider) accessTokenForCredentials(ctx context.Context, creds claudeAuth) (string, error) {
+	if creds.AccessToken == "" {
+		return "", fmt.Errorf("no access token found in credentials")
+	}
+	return creds.AccessToken, nil
+}
+
+func (c *ClaudeProvider) fetchAccountUsage(ctx context.Context, account claudeAuth) ([]UsageRow, error) {
+	if account.AccessToken == "" {
+		if account.LoadErr != "" {
+			return nil, fmt.Errorf("failed to load credentials: %s", account.LoadErr)
+		}
+		return nil, fmt.Errorf("no access token found in credentials")
+	}
+
+	resp, err := c.fetchUsageFromAPI(ctx, account.AccessToken)
 	if err != nil {
 		var statusErr APIStatusError
 		if errors.As(err, &statusErr) {
 			claudeDebugf("usage API status=%d body=%q", statusErr.StatusCode, redactTokens(statusErr.Body))
 		}
-		if errors.As(err, &statusErr) && creds.RefreshToken != "" &&
+		if errors.As(err, &statusErr) && account.RefreshToken != "" &&
 			(statusErr.StatusCode == http.StatusUnauthorized || statusErr.StatusCode == http.StatusForbidden) {
 			claudeDebugf("attempting token refresh after status=%d", statusErr.StatusCode)
-			refreshedToken, refreshErr := c.refreshAccessToken(ctx, creds)
+			refreshedToken, refreshErr := c.refreshAccessToken(ctx, account)
 			if refreshErr == nil {
 				claudeDebugf("token refresh succeeded, retrying usage API")
 				resp, err = c.fetchUsageFromAPI(ctx, refreshedToken)
@@ -142,101 +241,11 @@ func (c *ClaudeProvider) FetchUsage(ctx context.Context) ([]UsageRow, error) {
 		}
 	}
 	if err != nil {
-		return []UsageRow{{
-			Provider:   providerName,
-			IsWarning:  true,
-			WarningMsg: claudeWarningMessage(err),
-		}}, nil
+		return nil, err
 	}
 
+	providerName := claudeProviderName(account)
 	return c.parseUsageResponse(resp, providerName), nil
-}
-
-// loadCredentials loads the access token from the credentials file
-func (c *ClaudeProvider) loadCredentials() (claudeAuth, error) {
-	pattern := filepath.Join(c.homeDir, ".cli-proxy-api", "claude-*.json")
-
-	matches, err := filepath.Glob(pattern)
-	if err != nil {
-		return claudeAuth{}, fmt.Errorf("failed to glob credentials: %w", err)
-	}
-
-	if len(matches) == 0 {
-		return claudeAuth{}, fmt.Errorf("No credential files found matching %s", pattern)
-	}
-
-	sort.Strings(matches)
-
-	var (
-		chosen    claudeAuth
-		chosenMod time.Time
-		lastErr   error
-	)
-
-	for _, credsPath := range matches {
-		info, err := os.Stat(credsPath)
-		if err != nil {
-			lastErr = fmt.Errorf("failed to stat credentials file %s: %w", credsPath, err)
-			continue
-		}
-
-		data, err := os.ReadFile(credsPath)
-		if err != nil {
-			lastErr = fmt.Errorf("failed to read credentials file %s: %w", credsPath, err)
-			continue
-		}
-
-		var creds claudeCredentials
-		if err := json.Unmarshal(data, &creds); err != nil {
-			lastErr = fmt.Errorf("failed to parse credentials file %s: %w", credsPath, err)
-			continue
-		}
-
-		if creds.Type != "" && creds.Type != "claude" {
-			lastErr = fmt.Errorf("unexpected credential type %q in %s", creds.Type, credsPath)
-			continue
-		}
-
-		if creds.AccessToken == "" {
-			lastErr = fmt.Errorf("no access token found in credentials")
-			continue
-		}
-
-		sourceName := extractClaudeEmailFromFilename(filepath.Base(credsPath))
-		email := creds.Email
-		if email == "" {
-			email = sourceName
-		}
-
-		auth := claudeAuth{
-			AccessToken:    creds.AccessToken,
-			RefreshToken:   creds.RefreshToken,
-			Email:          email,
-			CredentialPath: credsPath,
-		}
-
-		if chosen.AccessToken == "" || info.ModTime().After(chosenMod) {
-			chosen = auth
-			chosenMod = info.ModTime()
-		}
-	}
-
-	if chosen.AccessToken != "" {
-		return chosen, nil
-	}
-
-	if lastErr != nil {
-		return claudeAuth{}, lastErr
-	}
-
-	return claudeAuth{}, fmt.Errorf("failed to load credentials")
-}
-
-func (c *ClaudeProvider) accessTokenForCredentials(ctx context.Context, creds claudeAuth) (string, error) {
-	if creds.AccessToken == "" {
-		return "", fmt.Errorf("no access token found in credentials")
-	}
-	return creds.AccessToken, nil
 }
 
 func (c *ClaudeProvider) refreshAccessToken(ctx context.Context, creds claudeAuth) (string, error) {
@@ -373,7 +382,7 @@ func (c *ClaudeProvider) parseUsageResponse(resp *claudeUsageResponse, providerN
 	var rows []UsageRow
 
 	if resp.FiveHour != nil {
-		resetTime, err := time.Parse(time.RFC3339Nano, resp.FiveHour.ResetsAt)
+		resetTime, err := parseClaudeResetTime(resp.FiveHour.ResetsAt)
 		if err != nil {
 			rows = append(rows, UsageRow{
 				Provider:   providerName,
@@ -392,7 +401,7 @@ func (c *ClaudeProvider) parseUsageResponse(resp *claudeUsageResponse, providerN
 	}
 
 	if resp.SevenDay != nil {
-		resetTime, err := time.Parse(time.RFC3339Nano, resp.SevenDay.ResetsAt)
+		resetTime, err := parseClaudeResetTime(resp.SevenDay.ResetsAt)
 		if err != nil {
 			rows = append(rows, UsageRow{
 				Provider:   providerName,
@@ -411,6 +420,13 @@ func (c *ClaudeProvider) parseUsageResponse(resp *claudeUsageResponse, providerN
 	}
 
 	return rows
+}
+
+func parseClaudeResetTime(raw string) (time.Time, error) {
+	if strings.TrimSpace(raw) == "" {
+		return time.Time{}, nil
+	}
+	return time.Parse(time.RFC3339Nano, raw)
 }
 
 func claudeWarningMessage(err error) string {
@@ -440,11 +456,14 @@ func claudeWarningMessage(err error) string {
 }
 
 func claudeProviderName(creds claudeAuth) string {
-	email := strings.TrimSpace(creds.Email)
-	if email == "" {
+	label := strings.TrimSpace(creds.Email)
+	if label == "" {
+		label = strings.TrimSpace(creds.SourceName)
+	}
+	if label == "" {
 		return "Claude"
 	}
-	return fmt.Sprintf("Claude (%s)", email)
+	return fmt.Sprintf("Claude (%s)", label)
 }
 
 func extractClaudeEmailFromFilename(filename string) string {

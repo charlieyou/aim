@@ -187,8 +187,8 @@ func TestClaudeProvider_FetchUsage_MalformedCreds(t *testing.T) {
 	if !rows[0].IsWarning {
 		t.Error("row[0].IsWarning = false, want true")
 	}
-	if rows[0].Provider != "Claude" {
-		t.Errorf("row[0].Provider = %q, want %q", rows[0].Provider, "Claude")
+	if rows[0].Provider != "Claude (user@example.com)" {
+		t.Errorf("row[0].Provider = %q, want %q", rows[0].Provider, "Claude (user@example.com)")
 	}
 	if rows[0].WarningMsg == "" {
 		t.Error("row[0].WarningMsg should contain parse error")
@@ -226,8 +226,8 @@ func TestClaudeProvider_FetchUsage_EmptyToken(t *testing.T) {
 	if !rows[0].IsWarning {
 		t.Error("row[0].IsWarning = false, want true")
 	}
-	if rows[0].WarningMsg != "no access token found in credentials" {
-		t.Errorf("row[0].WarningMsg = %q, want %q", rows[0].WarningMsg, "no access token found in credentials")
+	if rows[0].WarningMsg != "failed to load credentials: no access token found in credentials" {
+		t.Errorf("row[0].WarningMsg = %q, want %q", rows[0].WarningMsg, "failed to load credentials: no access token found in credentials")
 	}
 }
 
@@ -547,6 +547,63 @@ func TestClaudeProvider_FetchUsage_MalformedTimestamp(t *testing.T) {
 	}
 	if rows[1].UsagePercent != 36.0 {
 		t.Errorf("row[1].UsagePercent = %f, want %f", rows[1].UsagePercent, 36.0)
+	}
+}
+
+func TestClaudeProvider_FetchUsage_EmptyResetTime(t *testing.T) {
+	// Create mock server that returns an empty reset time
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{
+			"five_hour": {
+				"utilization": 12.0,
+				"resets_at": ""
+			},
+			"seven_day": {
+				"utilization": 34.0,
+				"resets_at": "2026-01-08T06:59:59+00:00"
+			}
+		}`))
+	}))
+	defer server.Close()
+
+	// Create temp credentials
+	tempDir := t.TempDir()
+	credDir := filepath.Join(tempDir, ".cli-proxy-api")
+	if err := os.MkdirAll(credDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	credsPath := filepath.Join(credDir, "claude-user@example.com.json")
+	credsJSON := `{"access_token": "test-token", "refresh_token": "refresh-token", "type": "claude"}`
+	if err := os.WriteFile(credsPath, []byte(credsJSON), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &ClaudeProvider{
+		homeDir: tempDir,
+		baseURL: server.URL,
+		client:  &http.Client{Timeout: 5 * time.Second},
+	}
+
+	rows, err := p.FetchUsage(context.Background())
+	if err != nil {
+		t.Fatalf("FetchUsage() error = %v", err)
+	}
+
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(rows))
+	}
+
+	if rows[0].IsWarning {
+		t.Fatalf("row[0].IsWarning = true, want false")
+	}
+	if !rows[0].ResetTime.IsZero() {
+		t.Fatalf("row[0].ResetTime = %v, want zero", rows[0].ResetTime)
+	}
+	if rows[1].IsWarning {
+		t.Fatalf("row[1].IsWarning = true, want false")
 	}
 }
 

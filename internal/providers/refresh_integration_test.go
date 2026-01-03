@@ -18,14 +18,22 @@ func TestClaudeRefreshIntegration(t *testing.T) {
 	if err != nil {
 		t.Skipf("Claude credentials not available: %v", err)
 	}
-	if creds.RefreshToken == "" {
+
+	var account *claudeAuth
+	for i := range creds {
+		if creds[i].RefreshToken != "" {
+			account = &creds[i]
+			break
+		}
+	}
+	if account == nil {
 		t.Skip("Claude refresh token not available")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
-	token, err := provider.refreshAccessToken(ctx, creds)
+	token, err := provider.refreshAccessToken(ctx, *account)
 	if err != nil {
 		t.Fatalf("Claude refresh failed: %v", err)
 	}
