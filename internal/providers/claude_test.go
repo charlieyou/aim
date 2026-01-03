@@ -150,7 +150,8 @@ func TestClaudeProvider_FetchUsage_MissingCreds(t *testing.T) {
 	if rows[0].Provider != "Claude" {
 		t.Errorf("row[0].Provider = %q, want %q", rows[0].Provider, "Claude")
 	}
-	expectedPattern := filepath.Join(tempDir, ".cli-proxy-api", "claude-*.json")
+	// When no proxy credentials exist, DetectCredentialSource returns SourceNative
+	expectedPattern := filepath.Join(tempDir, ".claude", ".credentials.json")
 	expectedMsg := "No credential files found matching " + expectedPattern
 	if rows[0].WarningMsg != expectedMsg {
 		t.Errorf("row[0].WarningMsg = %q, want %q", rows[0].WarningMsg, expectedMsg)
@@ -663,8 +664,8 @@ func TestClaude_LoadNativeCredentials_ValidFile(t *testing.T) {
 	if acc.RefreshToken != "sk-ant-ort01-test" {
 		t.Errorf("RefreshToken = %q, want %q", acc.RefreshToken, "sk-ant-ort01-test")
 	}
-	if acc.Email != "Claude (native)" {
-		t.Errorf("Email = %q, want %q", acc.Email, "Claude (native)")
+	if acc.Email != "native" {
+		t.Errorf("Email = %q, want %q", acc.Email, "native")
 	}
 	if !acc.IsNative {
 		t.Error("IsNative = false, want true")
@@ -721,8 +722,8 @@ func TestClaude_LoadNativeCredentials_InvalidJSON(t *testing.T) {
 	if !acc.IsNative {
 		t.Error("IsNative = false, want true")
 	}
-	if acc.Email != "Claude (native)" {
-		t.Errorf("Email = %q, want %q", acc.Email, "Claude (native)")
+	if acc.Email != "native" {
+		t.Errorf("Email = %q, want %q", acc.Email, "native")
 	}
 }
 

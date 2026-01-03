@@ -115,10 +115,16 @@ func (c *ClaudeProvider) FetchUsage(ctx context.Context) ([]UsageRow, error) {
 	}
 
 	if len(accounts) == 0 {
+		var credPath string
+		if DetectCredentialSource(c.homeDir) == SourceNative {
+			credPath = filepath.Join(c.homeDir, ".claude", ".credentials.json")
+		} else {
+			credPath = filepath.Join(c.homeDir, ".cli-proxy-api", "claude-*.json")
+		}
 		return []UsageRow{{
 			Provider:   c.Name(),
 			IsWarning:  true,
-			WarningMsg: fmt.Sprintf("No credential files found matching %s", filepath.Join(c.homeDir, ".cli-proxy-api", "claude-*.json")),
+			WarningMsg: fmt.Sprintf("No credential files found matching %s", credPath),
 		}}, nil
 	}
 
@@ -238,7 +244,7 @@ func (c *ClaudeProvider) loadNativeCredentials() ([]claudeAuth, error) {
 	var creds nativeCredentials
 	if err := json.Unmarshal(data, &creds); err != nil {
 		return []claudeAuth{{
-			Email:          "Claude (native)",
+			Email:          "native",
 			SourceName:     "native",
 			CredentialPath: credsPath,
 			IsNative:       true,
@@ -248,7 +254,7 @@ func (c *ClaudeProvider) loadNativeCredentials() ([]claudeAuth, error) {
 
 	if creds.ClaudeAIOAuth == nil || creds.ClaudeAIOAuth.AccessToken == "" {
 		return []claudeAuth{{
-			Email:          "Claude (native)",
+			Email:          "native",
 			SourceName:     "native",
 			CredentialPath: credsPath,
 			IsNative:       true,
@@ -259,7 +265,7 @@ func (c *ClaudeProvider) loadNativeCredentials() ([]claudeAuth, error) {
 	auth := claudeAuth{
 		AccessToken:    creds.ClaudeAIOAuth.AccessToken,
 		RefreshToken:   creds.ClaudeAIOAuth.RefreshToken,
-		Email:          "Claude (native)",
+		Email:          "native",
 		SourceName:     "native",
 		CredentialPath: credsPath,
 		IsNative:       true,
