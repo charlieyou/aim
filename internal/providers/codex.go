@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,21 +16,26 @@ import (
 )
 
 const (
-	codexDefaultBaseURL = "https://chatgpt.com"
-	codexRefreshURL     = "https://token.oaifree.com/api/auth/refresh"
+	codexDefaultBaseURL  = "https://chatgpt.com"
+	codexRefreshURL      = "https://auth.openai.com/oauth/token"
+	codexDefaultClientID = "app_EMoamEEZ73f0CkXaXp7hrann"
 )
 
 // CodexAccount holds credentials for a single Codex account
 type CodexAccount struct {
 	Email        string
 	Token        string
+	IDToken      string
 	RefreshToken string
+	ClientID     string
+	Scopes       []string
 	LoadErr      string // Error message from loading credentials, if any
 }
 
 // codexCredentials represents the JSON structure of credential files
 type codexCredentials struct {
 	AccessToken  string `json:"access_token"`
+	IDToken      string `json:"id_token"`
 	RefreshToken string `json:"refresh_token"`
 }
 
@@ -156,10 +162,15 @@ func (c *CodexProvider) loadCredentialFile(path string) (CodexAccount, error) {
 		return CodexAccount{}, fmt.Errorf("missing access_token")
 	}
 
+	clientID, scopes := extractCodexAuthDetails(creds.AccessToken, creds.IDToken)
+
 	return CodexAccount{
 		Email:        email,
 		Token:        creds.AccessToken,
+		IDToken:      creds.IDToken,
 		RefreshToken: creds.RefreshToken,
+		ClientID:     clientID,
+		Scopes:       scopes,
 	}, nil
 }
 
@@ -257,7 +268,16 @@ func (c *CodexProvider) refreshAccessToken(ctx context.Context, account CodexAcc
 	}
 
 	form := url.Values{}
+	form.Set("grant_type", "refresh_token")
 	form.Set("refresh_token", account.RefreshToken)
+	clientID := account.ClientID
+	if clientID == "" {
+		clientID = codexDefaultClientID
+	}
+	form.Set("client_id", clientID)
+	if len(account.Scopes) > 0 {
+		form.Set("scope", strings.Join(account.Scopes, " "))
+	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, refreshURL, strings.NewReader(form.Encode()))
 	if err != nil {
@@ -306,4 +326,110 @@ func (c *CodexProvider) refreshAccessToken(ctx context.Context, account CodexAcc
 	}
 
 	return refreshResp.AccessToken, nil
+}
+
+func extractCodexAuthDetails(accessToken, idToken string) (string, []string) {
+	// Prefer id_token for client_id since it contains the OAuth client_id,
+	// not the API audience like access tokens do
+	clientID, scopes := extractFromToken(idToken)
+
+	// Fall back to access token if id_token doesn't have client_id
+	if clientID == "" {
+		clientID, _ = extractFromToken(accessToken)
+	}
+
+	// Scopes can come from either token - use whichever has them
+	if len(scopes) == 0 {
+		_, scopes = extractFromToken(accessToken)
+	}
+
+	if clientID == "" {
+		clientID = codexDefaultClientID
+	}
+	return clientID, scopes
+}
+
+func extractFromToken(token string) (string, []string) {
+	claims, err := decodeJWTClaims(token)
+	if err != nil {
+		return "", nil
+	}
+	return extractClientID(claims), extractScopes(claims)
+}
+
+func decodeJWTClaims(token string) (map[string]any, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return nil, fmt.Errorf("invalid token")
+	}
+	payload := parts[1]
+	decoded, err := base64.RawURLEncoding.DecodeString(payload)
+	if err != nil {
+		padding := strings.Repeat("=", (4-len(payload)%4)%4)
+		decoded, err = base64.URLEncoding.DecodeString(payload + padding)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	var claims map[string]any
+	if err := json.Unmarshal(decoded, &claims); err != nil {
+		return nil, err
+	}
+
+	return claims, nil
+}
+
+func extractClientID(claims map[string]any) string {
+	if v, ok := claims["client_id"].(string); ok && v != "" {
+		return v
+	}
+	if aud, ok := claims["aud"]; ok {
+		switch t := aud.(type) {
+		case string:
+			return t
+		case []any:
+			for _, item := range t {
+				if s, ok := item.(string); ok && s != "" {
+					return s
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func extractScopes(claims map[string]any) []string {
+	if v, ok := claims["scp"]; ok {
+		return normalizeScopes(v)
+	}
+	if v, ok := claims["scope"]; ok {
+		return normalizeScopes(v)
+	}
+	return nil
+}
+
+func normalizeScopes(value any) []string {
+	switch v := value.(type) {
+	case []any:
+		var scopes []string
+		for _, item := range v {
+			if s, ok := item.(string); ok && s != "" {
+				scopes = append(scopes, s)
+			}
+		}
+		return scopes
+	case []string:
+		var scopes []string
+		for _, item := range v {
+			if item != "" {
+				scopes = append(scopes, item)
+			}
+		}
+		return scopes
+	case string:
+		return strings.Fields(v)
+	default:
+		return nil
+	}
 }
