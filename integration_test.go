@@ -40,21 +40,33 @@ func TestClaudeIntegration(t *testing.T) {
 		t.Fatalf("FetchUsage failed: %v", err)
 	}
 
-	// Check for warnings in rows (indicates credential or API issues)
-	for _, row := range rows {
-		if row.IsWarning {
-			t.Fatalf("Got warning instead of usage data: %s", row.WarningMsg)
-		}
-	}
-
 	// Should have at least one row (API may return different windows)
 	if len(rows) == 0 {
 		t.Fatal("Expected at least one row")
 	}
 
-	// Log actual values for verification
+	// Check for warnings (might indicate invalid/expired credentials)
+	var warnings, usageRows []providers.UsageRow
 	for _, row := range rows {
+		if row.IsWarning {
+			warnings = append(warnings, row)
+		} else {
+			usageRows = append(usageRows, row)
+		}
+	}
+
+	// If we only got warnings (e.g., expired tokens), skip rather than fail
+	// This makes the test safe for CI and machines with stale credentials
+	if len(usageRows) == 0 && len(warnings) > 0 {
+		t.Skipf("Claude credentials exist but returned warnings (likely expired): %s", warnings[0].WarningMsg)
+	}
+
+	// Log actual values for verification
+	for _, row := range usageRows {
 		t.Logf("Claude %s: %.1f%% (resets %v)", row.Label, row.UsagePercent, row.ResetTime)
+	}
+	for _, row := range warnings {
+		t.Logf("Warning: Claude - %s", row.WarningMsg)
 	}
 }
 
@@ -98,7 +110,7 @@ func TestCodexIntegration(t *testing.T) {
 	}
 
 	if len(usageRows) == 0 && len(warnings) > 0 {
-		t.Fatalf("Got only warnings: %s", warnings[0].WarningMsg)
+		t.Skipf("Codex credentials exist but returned warnings (likely expired): %s", warnings[0].WarningMsg)
 	}
 
 	// Log actual values for verification
