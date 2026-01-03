@@ -15,8 +15,14 @@ const (
 )
 
 // DetectCredentialSource checks if ANY provider has creds in ~/.cli-proxy-api/
-// Returns SourceProxy if any found, SourceNative if empty
+// Returns SourceProxy if any found, SourceNative if empty or homeDir is invalid
 func DetectCredentialSource(homeDir string) CredentialSource {
+	// Guard against empty homeDir (e.g., when os.UserHomeDir() fails in CI)
+	// to avoid scanning current directory and producing misleading results
+	if homeDir == "" {
+		return SourceNative
+	}
+
 	patterns := []string{
 		filepath.Join(homeDir, ".cli-proxy-api", "claude-*.json"),
 		filepath.Join(homeDir, ".cli-proxy-api", "codex-*.json"),

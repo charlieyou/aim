@@ -203,7 +203,13 @@ func (c *CodexProvider) loadNativeCredentials() ([]CodexAccount, error) {
 	}
 
 	if creds.Tokens.AccessToken == "" {
-		return nil, nil
+		// Return account with LoadErr so caller can surface the issue
+		return []CodexAccount{{
+			CredentialPath: path,
+			IsNative:       true,
+			DisplayName:    "native",
+			LoadErr:        fmt.Sprintf("no access token found in %s", path),
+		}}, nil
 	}
 
 	account := CodexAccount{

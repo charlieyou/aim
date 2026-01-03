@@ -173,7 +173,13 @@ func (g *GeminiProvider) loadNativeCredentials() []GeminiAccount {
 	}
 
 	if cred.AccessToken == "" {
-		return nil
+		// Return account with LoadErr so caller can surface the issue
+		return []GeminiAccount{{
+			Email:          "native",
+			IsNative:       true,
+			CredentialPath: credPath,
+			LoadErr:        fmt.Sprintf("no access token found in %s", credPath),
+		}}
 	}
 
 	var tokenExpiry time.Time

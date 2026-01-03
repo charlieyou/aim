@@ -978,6 +978,39 @@ func TestGeminiLoadNativeCredentials_MalformedJSON(t *testing.T) {
 	}
 }
 
+func TestGeminiLoadNativeCredentials_MissingAccessToken(t *testing.T) {
+	tmpDir := t.TempDir()
+	geminiDir := filepath.Join(tmpDir, ".gemini")
+	if err := os.MkdirAll(geminiDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Valid JSON but missing access_token
+	if err := os.WriteFile(filepath.Join(geminiDir, "oauth_creds.json"), []byte(`{"refresh_token": "refresh123"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &GeminiProvider{homeDir: tmpDir}
+	accounts := p.loadNativeCredentials()
+	if len(accounts) != 1 {
+		t.Fatalf("expected 1 account with LoadErr, got %d accounts", len(accounts))
+	}
+
+	acc := accounts[0]
+	if acc.LoadErr == "" {
+		t.Error("LoadErr should be set for missing access token")
+	}
+	if !strings.Contains(acc.LoadErr, "no access token") {
+		t.Errorf("LoadErr should mention missing access token, got: %v", acc.LoadErr)
+	}
+	if acc.Email != "native" {
+		t.Errorf("Email = %q, want %q", acc.Email, "native")
+	}
+	if !acc.IsNative {
+		t.Error("IsNative should be true")
+	}
+}
+
 func TestGeminiLoadCredentials_UsesGlobalSource(t *testing.T) {
 	tests := []struct {
 		name           string

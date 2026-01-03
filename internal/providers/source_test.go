@@ -90,3 +90,12 @@ func TestCredentialSource_DisplayName_Unknown(t *testing.T) {
 		t.Errorf("expected 'unknown', got %q", source.DisplayName())
 	}
 }
+
+func TestDetectCredentialSource_EmptyHomeDir(t *testing.T) {
+	// When homeDir is empty (e.g., os.UserHomeDir() fails in CI),
+	// should return SourceNative to avoid scanning current directory
+	source := DetectCredentialSource("")
+	if source != SourceNative {
+		t.Errorf("expected SourceNative for empty homeDir, got %v", source)
+	}
+}

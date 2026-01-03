@@ -772,6 +772,43 @@ func TestCodexLoadNativeCredentials_MalformedJSON(t *testing.T) {
 	}
 }
 
+func TestCodexLoadNativeCredentials_MissingAccessToken(t *testing.T) {
+	tmpDir := t.TempDir()
+	codexDir := filepath.Join(tmpDir, ".codex")
+	if err := os.MkdirAll(codexDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Valid JSON but missing access_token
+	authData := `{"tokens": {"refresh_token": "refresh123"}}`
+	if err := os.WriteFile(filepath.Join(codexDir, "auth.json"), []byte(authData), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	provider := &CodexProvider{homeDir: tmpDir}
+	accounts, err := provider.loadNativeCredentials()
+	if err != nil {
+		t.Fatalf("loadNativeCredentials() error = %v", err)
+	}
+	if len(accounts) != 1 {
+		t.Fatalf("got %d accounts, want 1", len(accounts))
+	}
+
+	acc := accounts[0]
+	if acc.LoadErr == "" {
+		t.Error("LoadErr should be set for missing access token")
+	}
+	if !strings.Contains(acc.LoadErr, "no access token") {
+		t.Errorf("LoadErr should mention missing access token, got: %v", acc.LoadErr)
+	}
+	if acc.DisplayName != "native" {
+		t.Errorf("DisplayName = %q, want %q", acc.DisplayName, "native")
+	}
+	if !acc.IsNative {
+		t.Error("IsNative should be true")
+	}
+}
+
 func TestCodexLoadCredentials_UsesGlobalSource(t *testing.T) {
 	// Test that loadCredentials respects DetectCredentialSource
 	tmpDir := t.TempDir()
