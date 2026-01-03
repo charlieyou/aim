@@ -34,6 +34,7 @@ type GeminiAccount struct {
 	ProjectID      string
 	CredentialPath string
 	IsNative       bool
+	LoadErr        string // Error message from loading credentials, if any
 }
 
 // GeminiProvider fetches usage data from Gemini (Google) quota API
@@ -131,7 +132,7 @@ func (g *GeminiProvider) FetchUsage(ctx context.Context) ([]UsageRow, error) {
 			rows = append(rows, UsageRow{
 				Provider:   fmt.Sprintf("Gemini (%s)", account.Email),
 				IsWarning:  true,
-				WarningMsg: fmt.Sprintf("API error: %v", err),
+				WarningMsg: err.Error(),
 			})
 			continue
 		}
@@ -149,22 +150,30 @@ type nativeGeminiCred struct {
 }
 
 // loadNativeCredentials loads credentials from ~/.gemini/oauth_creds.json
-func (g *GeminiProvider) loadNativeCredentials() ([]GeminiAccount, error) {
+// Returns an account with LoadErr set if parsing fails, allowing the caller to
+// report a single account-specific warning row.
+func (g *GeminiProvider) loadNativeCredentials() []GeminiAccount {
 	credPath := filepath.Join(g.homeDir, ".gemini", "oauth_creds.json")
 
 	data, err := os.ReadFile(credPath)
 	if err != nil {
 		// Silent return if file missing/unreadable
-		return nil, nil //nolint:nilerr
+		return nil
 	}
 
 	var cred nativeGeminiCred
 	if err := json.Unmarshal(data, &cred); err != nil {
-		return nil, fmt.Errorf("invalid JSON in %s: %w", credPath, err)
+		// Return account with LoadErr so caller can surface the parse error
+		return []GeminiAccount{{
+			Email:          "native",
+			IsNative:       true,
+			CredentialPath: credPath,
+			LoadErr:        fmt.Sprintf("failed to parse %s: %v", credPath, err),
+		}}
 	}
 
 	if cred.AccessToken == "" {
-		return nil, nil
+		return nil
 	}
 
 	var tokenExpiry time.Time
@@ -173,7 +182,7 @@ func (g *GeminiProvider) loadNativeCredentials() ([]GeminiAccount, error) {
 	}
 
 	account := GeminiAccount{
-		Email:          "Gemini (native)",
+		Email:          "native",
 		Token:          cred.AccessToken,
 		RefreshToken:   cred.RefreshToken,
 		ProjectID:      "",
@@ -182,7 +191,7 @@ func (g *GeminiProvider) loadNativeCredentials() ([]GeminiAccount, error) {
 		CredentialPath: credPath,
 	}
 
-	return []GeminiAccount{account}, nil
+	return []GeminiAccount{account}
 }
 
 // loadCredentials discovers and loads credentials based on global credential source
@@ -192,10 +201,7 @@ func (g *GeminiProvider) loadCredentials() ([]GeminiAccount, []string, Credentia
 
 	source := DetectCredentialSource(g.homeDir)
 	if source == SourceNative {
-		nativeAccounts, err := g.loadNativeCredentials()
-		if err != nil {
-			warnings = append(warnings, fmt.Sprintf("Failed to load native Gemini credentials: %v", err))
-		}
+		nativeAccounts := g.loadNativeCredentials()
 		return nativeAccounts, warnings, source
 	}
 
@@ -295,6 +301,10 @@ func (g *GeminiProvider) parseCredFile(filePath, baseName string) (*GeminiAccoun
 
 // fetchAccountUsage makes the API call for a single account
 func (g *GeminiProvider) fetchAccountUsage(ctx context.Context, account GeminiAccount) ([]UsageRow, error) {
+	if account.LoadErr != "" {
+		return nil, fmt.Errorf("failed to load credentials: %s", account.LoadErr)
+	}
+
 	token, err := g.accessTokenForAccount(ctx, account)
 	if err != nil {
 		return nil, err
@@ -305,17 +315,24 @@ func (g *GeminiProvider) fetchAccountUsage(ctx context.Context, account GeminiAc
 		return nil, err
 	}
 
-	if status == http.StatusUnauthorized && account.RefreshToken != "" {
-		debugf("Gemini", "attempting token refresh after status=%d for %s", status, fmt.Sprintf("Gemini (%s)", account.Email))
-		token, err = g.refreshAccessToken(ctx, account)
-		if err != nil {
-			debugf("Gemini", "token refresh failed for %s: %v", fmt.Sprintf("Gemini (%s)", account.Email), err)
-			return nil, err
+	if status == http.StatusUnauthorized {
+		// For native credentials, always return the re-auth message on 401
+		if account.IsNative {
+			return nil, fmt.Errorf("token expired. Re-authenticate with gemini to refresh")
 		}
-		debugf("Gemini", "token refresh succeeded, retrying quota API for %s", fmt.Sprintf("Gemini (%s)", account.Email))
-		body, status, err = g.doQuotaRequest(ctx, account, token)
-		if err != nil {
-			return nil, err
+		// For proxy credentials, attempt refresh if we have a refresh token
+		if account.RefreshToken != "" {
+			debugf("Gemini", "attempting token refresh after status=%d for %s", status, fmt.Sprintf("Gemini (%s)", account.Email))
+			token, err = g.refreshAccessToken(ctx, account)
+			if err != nil {
+				debugf("Gemini", "token refresh failed for %s: %v", fmt.Sprintf("Gemini (%s)", account.Email), err)
+				return nil, err
+			}
+			debugf("Gemini", "token refresh succeeded, retrying quota API for %s", fmt.Sprintf("Gemini (%s)", account.Email))
+			body, status, err = g.doQuotaRequest(ctx, account, token)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 

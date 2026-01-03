@@ -567,8 +567,8 @@ func TestGeminiProvider_FetchUsage_APIError(t *testing.T) {
 	if !rows[0].IsWarning {
 		t.Error("Expected IsWarning = true")
 	}
-	if !strings.Contains(rows[0].WarningMsg, "API error") {
-		t.Errorf("Expected API error warning, got: %s", rows[0].WarningMsg)
+	if !strings.Contains(rows[0].WarningMsg, "API returned status") {
+		t.Errorf("Expected API status warning, got: %s", rows[0].WarningMsg)
 	}
 }
 
@@ -865,17 +865,14 @@ func TestGeminiLoadNativeCredentials_ValidFile(t *testing.T) {
 	}
 
 	p := &GeminiProvider{homeDir: tmpDir}
-	accounts, err := p.loadNativeCredentials()
-	if err != nil {
-		t.Fatalf("loadNativeCredentials() error = %v", err)
-	}
+	accounts := p.loadNativeCredentials()
 	if len(accounts) != 1 {
 		t.Fatalf("expected 1 account, got %d", len(accounts))
 	}
 
 	acc := accounts[0]
-	if acc.Email != "Gemini (native)" {
-		t.Errorf("Email = %q, want %q", acc.Email, "Gemini (native)")
+	if acc.Email != "native" {
+		t.Errorf("Email = %q, want %q", acc.Email, "native")
 	}
 	if acc.Token != "ya29.native-token" {
 		t.Errorf("Token = %q, want %q", acc.Token, "ya29.native-token")
@@ -905,10 +902,7 @@ func TestGeminiLoadNativeCredentials_ExpiryDate(t *testing.T) {
 	}
 
 	p := &GeminiProvider{homeDir: tmpDir}
-	accounts, err := p.loadNativeCredentials()
-	if err != nil {
-		t.Fatalf("loadNativeCredentials() error = %v", err)
-	}
+	accounts := p.loadNativeCredentials()
 	if len(accounts) != 1 {
 		t.Fatalf("expected 1 account, got %d", len(accounts))
 	}
@@ -932,10 +926,7 @@ func TestGeminiLoadNativeCredentials_MissingExpiry(t *testing.T) {
 	}
 
 	p := &GeminiProvider{homeDir: tmpDir}
-	accounts, err := p.loadNativeCredentials()
-	if err != nil {
-		t.Fatalf("loadNativeCredentials() error = %v", err)
-	}
+	accounts := p.loadNativeCredentials()
 	if len(accounts) != 1 {
 		t.Fatalf("expected 1 account, got %d", len(accounts))
 	}
@@ -948,12 +939,42 @@ func TestGeminiLoadNativeCredentials_MissingExpiry(t *testing.T) {
 func TestGeminiLoadNativeCredentials_MissingFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	p := &GeminiProvider{homeDir: tmpDir}
-	accounts, err := p.loadNativeCredentials()
-	if err != nil {
-		t.Fatalf("loadNativeCredentials() error = %v", err)
-	}
+	accounts := p.loadNativeCredentials()
 	if accounts != nil {
 		t.Errorf("expected nil accounts for missing file, got %v", accounts)
+	}
+}
+
+func TestGeminiLoadNativeCredentials_MalformedJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	geminiDir := filepath.Join(tmpDir, ".gemini")
+	if err := os.MkdirAll(geminiDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write invalid JSON
+	if err := os.WriteFile(filepath.Join(geminiDir, "oauth_creds.json"), []byte("{invalid json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &GeminiProvider{homeDir: tmpDir}
+	accounts := p.loadNativeCredentials()
+	if len(accounts) != 1 {
+		t.Fatalf("expected 1 account with LoadErr, got %d accounts", len(accounts))
+	}
+
+	acc := accounts[0]
+	if acc.LoadErr == "" {
+		t.Error("LoadErr should be set for malformed JSON")
+	}
+	if !strings.Contains(acc.LoadErr, "failed to parse") {
+		t.Errorf("LoadErr should mention parse failure, got: %v", acc.LoadErr)
+	}
+	if acc.Email != "native" {
+		t.Errorf("Email = %q, want %q", acc.Email, "native")
+	}
+	if !acc.IsNative {
+		t.Error("IsNative should be true")
 	}
 }
 
@@ -1039,7 +1060,7 @@ func TestGeminiRefreshAccessToken_NativeSkip(t *testing.T) {
 	}
 
 	account := GeminiAccount{
-		Email:        "Gemini (native)",
+		Email:        "native",
 		Token:        "ya29.expired",
 		RefreshToken: "1//refresh",
 		IsNative:     true,
