@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"fmt"
 	"time"
 	"unicode/utf8"
 )
@@ -20,6 +21,16 @@ type UsageRow struct {
 type Provider interface {
 	Name() string
 	FetchUsage(ctx context.Context) ([]UsageRow, error)
+}
+
+// APIStatusError represents a non-200 HTTP response with a truncated body.
+type APIStatusError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e APIStatusError) Error() string {
+	return fmt.Sprintf("API returned status %d: %s", e.StatusCode, e.Body)
 }
 
 // ProviderError wraps errors with provider context

@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -338,7 +339,8 @@ func TestClaudeProvider_FetchUsage_RefreshesTokenOn401(t *testing.T) {
 	}
 
 	credsPath := filepath.Join(claudeDir, ".credentials.json")
-	credsJSON := `{"claudeAiOauth": {"accessToken": "old-token", "refreshToken": "refresh-token", "expiresAt": 1767396165210, "scopes": ["user:profile","user:inference","user:sessions:claude_code"]}}`
+	expiresAt := time.Now().Add(2 * time.Hour).UnixMilli()
+	credsJSON := fmt.Sprintf(`{"claudeAiOauth": {"accessToken": "old-token", "refreshToken": "refresh-token", "expiresAt": %d, "scopes": ["user:profile","user:inference","user:sessions:claude_code"]}}`, expiresAt)
 	if err := os.WriteFile(credsPath, []byte(credsJSON), 0600); err != nil {
 		t.Fatal(err)
 	}

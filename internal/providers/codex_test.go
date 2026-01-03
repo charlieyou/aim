@@ -3,8 +3,10 @@ package providers
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -388,6 +390,83 @@ func TestCodexProvider_FetchUsage_APIError(t *testing.T) {
 	}
 	if rows[0].Provider != "Codex (user@example.com)" {
 		t.Errorf("rows[0].Provider = %q, want %q", rows[0].Provider, "Codex (user@example.com)")
+	}
+}
+
+func TestCodexProvider_FetchUsage_RefreshesTokenOn401(t *testing.T) {
+	refreshCalls := 0
+	refreshServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		refreshCalls++
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		body, _ := io.ReadAll(r.Body)
+		values, _ := url.ParseQuery(string(body))
+		if values.Get("refresh_token") != "refresh-token" {
+			t.Errorf("expected refresh_token refresh-token, got %q", values.Get("refresh_token"))
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"new-token"}`))
+	}))
+	defer refreshServer.Close()
+
+	usageCalls := 0
+	usageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		usageCalls++
+		if r.Header.Get("Authorization") != "Bearer new-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+
+		resp := codexAPIResponse{PlanType: "pro"}
+		resp.RateLimit.PrimaryWindow.UsedPercent = 12.0
+		resp.RateLimit.PrimaryWindow.ResetAt = time.Now().Unix()
+		resp.RateLimit.SecondaryWindow.UsedPercent = 34.0
+		resp.RateLimit.SecondaryWindow.ResetAt = time.Now().Unix()
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer usageServer.Close()
+
+	tmpDir := t.TempDir()
+	credDir := filepath.Join(tmpDir, ".cli-proxy-api")
+	if err := os.MkdirAll(credDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	credFile := filepath.Join(credDir, "codex-user@example.com.json")
+	credData := `{"access_token": "old-token", "refresh_token": "refresh-token"}`
+	if err := os.WriteFile(credFile, []byte(credData), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	provider := &CodexProvider{
+		homeDir:    tmpDir,
+		baseURL:    usageServer.URL,
+		refreshURL: refreshServer.URL,
+		client:     &http.Client{Timeout: 5 * time.Second},
+	}
+
+	rows, err := provider.FetchUsage(context.Background())
+	if err != nil {
+		t.Fatalf("FetchUsage() error = %v", err)
+	}
+
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(rows))
+	}
+	if refreshCalls != 1 {
+		t.Errorf("expected 1 refresh call, got %d", refreshCalls)
+	}
+	if usageCalls != 2 {
+		t.Errorf("expected 2 usage calls (401 + retry), got %d", usageCalls)
+	}
+	for _, row := range rows {
+		if row.IsWarning {
+			t.Errorf("unexpected warning row: %s", row.WarningMsg)
+		}
 	}
 }
 

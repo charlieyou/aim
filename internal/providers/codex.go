@@ -3,20 +3,28 @@ package providers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 )
 
+const (
+	codexDefaultBaseURL = "https://chatgpt.com"
+	codexRefreshURL     = "https://token.oaifree.com/api/auth/refresh"
+)
+
 // CodexAccount holds credentials for a single Codex account
 type CodexAccount struct {
-	Email   string
-	Token   string
-	LoadErr string // Error message from loading credentials, if any
+	Email        string
+	Token        string
+	RefreshToken string
+	LoadErr      string // Error message from loading credentials, if any
 }
 
 // codexCredentials represents the JSON structure of credential files
@@ -42,9 +50,10 @@ type codexAPIResponse struct {
 
 // CodexProvider implements the Provider interface for OpenAI Codex
 type CodexProvider struct {
-	homeDir string
-	baseURL string
-	client  *http.Client
+	homeDir    string
+	baseURL    string
+	refreshURL string
+	client     *http.Client
 }
 
 // NewCodexProvider creates a new CodexProvider with default settings
@@ -55,8 +64,9 @@ func NewCodexProvider() (*CodexProvider, error) {
 	}
 
 	return &CodexProvider{
-		homeDir: homeDir,
-		baseURL: "https://chatgpt.com",
+		homeDir:    homeDir,
+		baseURL:    codexDefaultBaseURL,
+		refreshURL: codexRefreshURL,
 		client: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -147,8 +157,9 @@ func (c *CodexProvider) loadCredentialFile(path string) (CodexAccount, error) {
 	}
 
 	return CodexAccount{
-		Email: email,
-		Token: creds.AccessToken,
+		Email:        email,
+		Token:        creds.AccessToken,
+		RefreshToken: creds.RefreshToken,
 	}, nil
 }
 
@@ -169,30 +180,19 @@ func (c *CodexProvider) fetchAccountUsage(ctx context.Context, account CodexAcco
 		return nil, fmt.Errorf("failed to load credentials")
 	}
 
-	url := c.baseURL + "/backend-api/wham/usage"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	apiResp, err := c.fetchUsageWithToken(ctx, account.Token)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		var statusErr APIStatusError
+		if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusUnauthorized && account.RefreshToken != "" {
+			refreshed, refreshErr := c.refreshAccessToken(ctx, account)
+			if refreshErr != nil {
+				return nil, refreshErr
+			}
+			apiResp, err = c.fetchUsageWithToken(ctx, refreshed)
+		}
 	}
-
-	req.Header.Set("Authorization", "Bearer "+account.Token)
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "ai-meter/0.1.0")
-
-	resp, err := c.client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("API request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, TruncateBody(body, 200))
-	}
-
-	var apiResp codexAPIResponse
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
+		return nil, err
 	}
 
 	providerName := fmt.Sprintf("Codex (%s)", account.Email)
@@ -211,4 +211,99 @@ func (c *CodexProvider) fetchAccountUsage(ctx context.Context, account CodexAcco
 			ResetTime:    time.Unix(apiResp.RateLimit.SecondaryWindow.ResetAt, 0),
 		},
 	}, nil
+}
+
+func (c *CodexProvider) fetchUsageWithToken(ctx context.Context, token string) (*codexAPIResponse, error) {
+	url := c.baseURL + "/backend-api/wham/usage"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "ai-meter/0.1.0")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("API request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, APIStatusError{
+			StatusCode: resp.StatusCode,
+			Body:       TruncateBody(body, 200),
+		}
+	}
+
+	var apiResp codexAPIResponse
+	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &apiResp, nil
+}
+
+func (c *CodexProvider) refreshAccessToken(ctx context.Context, account CodexAccount) (string, error) {
+	if account.RefreshToken == "" {
+		return "", fmt.Errorf("refresh token not available")
+	}
+
+	refreshURL := c.refreshURL
+	if refreshURL == "" {
+		refreshURL = codexRefreshURL
+	}
+
+	form := url.Values{}
+	form.Set("refresh_token", account.RefreshToken)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, refreshURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", fmt.Errorf("failed to create refresh request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("token refresh request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read token refresh response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", APIStatusError{
+			StatusCode: resp.StatusCode,
+			Body:       TruncateBody(body, 200),
+		}
+	}
+
+	var refreshResp struct {
+		AccessToken string `json:"access_token"`
+	}
+	if err := json.Unmarshal(body, &refreshResp); err != nil {
+		return "", fmt.Errorf("failed to parse token refresh response: %w", err)
+	}
+	if refreshResp.AccessToken == "" {
+		var raw map[string]any
+		if err := json.Unmarshal(body, &raw); err == nil {
+			if v, ok := raw["access_token"].(string); ok && v != "" {
+				refreshResp.AccessToken = v
+			} else if v, ok := raw["accessToken"].(string); ok && v != "" {
+				refreshResp.AccessToken = v
+			} else if v, ok := raw["token"].(string); ok && v != "" {
+				refreshResp.AccessToken = v
+			}
+		}
+	}
+	if refreshResp.AccessToken == "" {
+		return "", fmt.Errorf("token refresh failed: empty access_token")
+	}
+
+	return refreshResp.AccessToken, nil
 }
