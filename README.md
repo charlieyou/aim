@@ -42,22 +42,6 @@ Show Gemini 2.x models (labels starting with `gemini-2`):
 aim --gemini-old
 ```
 
-Example output:
-
-```
-┌───────────────────────────────┬─────────┬─────────────┬─────────────────────┐
-│ Provider                      │ Window  │ Usage       │ Resets At           │
-├───────────────────────────────┼─────────┼─────────────┼─────────────────────┤
-│ Claude (user@ex.com)          │ 5-hour  │ ████░░ 24%  │ in 2h 15m           │
-│ Claude (user@ex.com)          │ 7-day   │ ██████░ 36% │ Jan 8 07:00 PST     │
-│ Codex (user@ex.com)           │ 5-hour  │ ░░░░░░ 3%   │ in 4h 24m           │
-│ Codex (user@ex.com)           │ 7-day   │ █░░░░░ 9%   │ Jan 8 12:30 PST     │
-│ Gemini (user@ex.com/my-proj)  │         │             │                     │
-│   gemini-3-pro                │ 24-hour │ ██░░░░ 12%  │ in 3h 45m           │
-│   gemini-3-flash              │ 24-hour │ ███░░░ 18%  │ Jan 9 09:00 PST     │
-└───────────────────────────────┴─────────┴─────────────┴─────────────────────┘
-```
-
 ## Credential Locations
 
 | Provider | Path |
