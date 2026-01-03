@@ -353,8 +353,9 @@ func TestGeminiProvider_FetchUsage_NoCreds(t *testing.T) {
 	if row.Provider != "Gemini" {
 		t.Errorf("Provider = %q, want %q", row.Provider, "Gemini")
 	}
-	if row.WarningMsg != "No valid credential files found in ~/.cli-proxy-api/gemini-*.json" {
-		t.Errorf("WarningMsg = %q", row.WarningMsg)
+	// Message now uses source.DisplayName() dynamically
+	if !strings.Contains(row.WarningMsg, "No valid credentials found for") {
+		t.Errorf("WarningMsg = %q, want prefix 'No valid credentials found for'", row.WarningMsg)
 	}
 }
 
@@ -404,7 +405,7 @@ func TestGeminiProvider_FetchUsage_MissingProjectID(t *testing.T) {
 	if !rows[1].IsWarning {
 		t.Error("Expected rows[1].IsWarning = true")
 	}
-	if !strings.Contains(rows[1].WarningMsg, "No valid credential files") {
+	if !strings.Contains(rows[1].WarningMsg, "No valid credentials found for") {
 		t.Errorf("Expected warning about no valid credentials, got: %s", rows[1].WarningMsg)
 	}
 }
@@ -1015,7 +1016,7 @@ func TestGeminiLoadCredentials_UsesGlobalSource(t *testing.T) {
 			}
 
 			p := &GeminiProvider{homeDir: tmpDir}
-			accounts, _ := p.loadCredentials()
+			accounts, _, _ := p.loadCredentials()
 
 			if len(accounts) != tt.expectAccounts {
 				t.Errorf("expected %d accounts, got %d", tt.expectAccounts, len(accounts))

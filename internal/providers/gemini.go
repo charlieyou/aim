@@ -102,7 +102,7 @@ func (g *GeminiProvider) Name() string {
 
 // FetchUsage fetches usage data from all discovered Gemini accounts
 func (g *GeminiProvider) FetchUsage(ctx context.Context) ([]UsageRow, error) {
-	accounts, warnings := g.loadCredentials()
+	accounts, warnings, source := g.loadCredentials()
 
 	var rows []UsageRow
 
@@ -119,7 +119,7 @@ func (g *GeminiProvider) FetchUsage(ctx context.Context) ([]UsageRow, error) {
 		rows = append(rows, UsageRow{
 			Provider:   "Gemini",
 			IsWarning:  true,
-			WarningMsg: "No valid credential files found in ~/.cli-proxy-api/gemini-*.json",
+			WarningMsg: fmt.Sprintf("No valid credentials found for %s", source.DisplayName()),
 		})
 		return rows, nil
 	}
@@ -160,7 +160,7 @@ func (g *GeminiProvider) loadNativeCredentials() ([]GeminiAccount, error) {
 
 	var cred nativeGeminiCred
 	if err := json.Unmarshal(data, &cred); err != nil {
-		return nil, nil //nolint:nilerr
+		return nil, fmt.Errorf("invalid JSON in %s: %w", credPath, err)
 	}
 
 	if cred.AccessToken == "" {
@@ -186,7 +186,7 @@ func (g *GeminiProvider) loadNativeCredentials() ([]GeminiAccount, error) {
 }
 
 // loadCredentials discovers and loads credentials based on global credential source
-func (g *GeminiProvider) loadCredentials() ([]GeminiAccount, []string) {
+func (g *GeminiProvider) loadCredentials() ([]GeminiAccount, []string, CredentialSource) {
 	var accounts []GeminiAccount
 	var warnings []string
 
@@ -196,7 +196,7 @@ func (g *GeminiProvider) loadCredentials() ([]GeminiAccount, []string) {
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("Failed to load native Gemini credentials: %v", err))
 		}
-		return nativeAccounts, warnings
+		return nativeAccounts, warnings, source
 	}
 
 	// SourceProxy: load from ~/.cli-proxy-api/gemini-*.json
@@ -204,7 +204,7 @@ func (g *GeminiProvider) loadCredentials() ([]GeminiAccount, []string) {
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
 		warnings = append(warnings, fmt.Sprintf("Failed to glob %s: %v", pattern, err))
-		return accounts, warnings
+		return accounts, warnings, source
 	}
 
 	sort.Strings(matches)
@@ -228,7 +228,7 @@ func (g *GeminiProvider) loadCredentials() ([]GeminiAccount, []string) {
 		accounts = append(accounts, *account)
 	}
 
-	return accounts, warnings
+	return accounts, warnings, source
 }
 
 // parseCredFile reads and validates a credential file
