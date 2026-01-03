@@ -162,19 +162,6 @@ func (c *CodexProvider) loadCredentials() ([]CodexAccount, error) {
 	return accounts, nil
 }
 
-func codexAccountKey(account CodexAccount, filename string) string {
-	if account.AccountID != "" {
-		return "account_id:" + strings.ToLower(account.AccountID)
-	}
-	if account.SourceName != "" {
-		return "source:" + strings.ToLower(account.SourceName)
-	}
-	if account.Email != "" {
-		return "email:" + strings.ToLower(account.Email)
-	}
-	return "file:" + strings.ToLower(filename)
-}
-
 func applyCodexDisplayNames(accounts []CodexAccount) {
 	emailCounts := make(map[string]int)
 	emailHasAltSource := make(map[string]bool)
@@ -299,44 +286,6 @@ func codexAccountDebug(account CodexAccount, planType string) string {
 		parts = append(parts, "token:"+fp)
 	}
 	return strings.Join(parts, " ")
-}
-
-func preferCodexAccount(existing, candidate CodexAccount) CodexAccount {
-	if existing.Token == "" && candidate.Token != "" {
-		return candidate
-	}
-	if existing.Token != "" && candidate.Token == "" {
-		return existing
-	}
-
-	if !existing.ExpiresAt.IsZero() || !candidate.ExpiresAt.IsZero() {
-		if existing.ExpiresAt.IsZero() {
-			return candidate
-		}
-		if candidate.ExpiresAt.IsZero() {
-			return existing
-		}
-		if candidate.ExpiresAt.After(existing.ExpiresAt) {
-			return candidate
-		}
-		if existing.ExpiresAt.After(candidate.ExpiresAt) {
-			return existing
-		}
-	}
-
-	if !existing.LastRefresh.IsZero() || !candidate.LastRefresh.IsZero() {
-		if existing.LastRefresh.IsZero() {
-			return candidate
-		}
-		if candidate.LastRefresh.IsZero() {
-			return existing
-		}
-		if candidate.LastRefresh.After(existing.LastRefresh) {
-			return candidate
-		}
-	}
-
-	return existing
 }
 
 // fetchAccountUsage fetches usage for a single account

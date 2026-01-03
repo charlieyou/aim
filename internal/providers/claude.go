@@ -206,13 +206,6 @@ func (c *ClaudeProvider) loadCredentialFile(credsPath string) (claudeAuth, error
 	}, nil
 }
 
-func (c *ClaudeProvider) accessTokenForCredentials(ctx context.Context, creds claudeAuth) (string, error) {
-	if creds.AccessToken == "" {
-		return "", fmt.Errorf("no access token found in credentials")
-	}
-	return creds.AccessToken, nil
-}
-
 func (c *ClaudeProvider) fetchAccountUsage(ctx context.Context, account claudeAuth) ([]UsageRow, error) {
 	if account.AccessToken == "" {
 		if account.LoadErr != "" {
