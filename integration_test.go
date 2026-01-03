@@ -311,23 +311,22 @@ func TestFullRun(t *testing.T) {
 	t.Logf("Table output:\n%s", tableOutput)
 
 	// Verify table format contains expected structure
-	// Headers are uppercase in the rendered table
-	if !strings.Contains(tableOutput, "PROVIDER") {
-		t.Error("Table output missing 'PROVIDER' header")
+	if !strings.Contains(tableOutput, "Provider") {
+		t.Error("Table output missing 'Provider' header")
 	}
-	if !strings.Contains(tableOutput, "WINDOW") {
-		t.Error("Table output missing 'WINDOW' header")
+	if !strings.Contains(tableOutput, "Window") {
+		t.Error("Table output missing 'Window' header")
 	}
-	if !strings.Contains(tableOutput, "USAGE") {
-		t.Error("Table output missing 'USAGE' header")
+	if !strings.Contains(tableOutput, "Usage") {
+		t.Error("Table output missing 'Usage' header")
 	}
-	if !strings.Contains(tableOutput, "RESETS AT") {
-		t.Error("Table output missing 'RESETS AT' header")
+	if !strings.Contains(tableOutput, "Resets At") {
+		t.Error("Table output missing 'Resets At' header")
 	}
 
 	// Verify we got data or warnings (not empty)
 	lines := strings.Split(strings.TrimSpace(tableOutput), "\n")
-	if len(lines) < 3 { // Header + separator + at least one data row
-		t.Errorf("Expected at least 3 lines in table output, got %d", len(lines))
+	if len(lines) < 2 { // Header + at least one data row
+		t.Errorf("Expected at least 2 lines in table output, got %d", len(lines))
 	}
 }

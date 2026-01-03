@@ -98,18 +98,18 @@ func TestRenderTable_NormalRows(t *testing.T) {
 	RenderTable(rows, &buf, false)
 	output := buf.String()
 
-	// Verify table structure (tablewriter uppercases headers)
-	if !strings.Contains(output, "PROVIDER") {
-		t.Error("Output missing 'PROVIDER' header")
+	// Verify headers are present
+	if !strings.Contains(output, "Provider") {
+		t.Error("Output missing 'Provider' header")
 	}
-	if !strings.Contains(output, "WINDOW") {
-		t.Error("Output missing 'WINDOW' header")
+	if !strings.Contains(output, "Window") {
+		t.Error("Output missing 'Window' header")
 	}
-	if !strings.Contains(output, "USAGE") {
-		t.Error("Output missing 'USAGE' header")
+	if !strings.Contains(output, "Usage") {
+		t.Error("Output missing 'Usage' header")
 	}
-	if !strings.Contains(output, "RESETS AT") {
-		t.Error("Output missing 'RESETS AT' header")
+	if !strings.Contains(output, "Resets At") {
+		t.Error("Output missing 'Resets At' header")
 	}
 
 	// Verify content
@@ -153,8 +153,8 @@ func TestRenderTable_DebugColumn(t *testing.T) {
 	RenderTable(rows, &buf, true)
 	output := buf.String()
 
-	if !strings.Contains(output, "DEBUG") {
-		t.Error("Output missing 'DEBUG' header")
+	if !strings.Contains(output, "Debug") {
+		t.Error("Output missing 'Debug' header")
 	}
 	if !strings.Contains(output, "acct:abc123") {
 		t.Error("Output missing debug info")
@@ -251,23 +251,18 @@ func TestRenderTable_EmptyRows(t *testing.T) {
 	RenderTable(rows, &buf, false)
 	output := buf.String()
 
-	// Empty table should still have headers (tablewriter uppercases headers)
-	if !strings.Contains(output, "PROVIDER") {
-		t.Error("Empty table missing 'PROVIDER' header")
+	// Empty table should still have headers
+	if !strings.Contains(output, "Provider") {
+		t.Error("Empty table missing 'Provider' header")
 	}
-	if !strings.Contains(output, "WINDOW") {
-		t.Error("Empty table missing 'WINDOW' header")
+	if !strings.Contains(output, "Window") {
+		t.Error("Empty table missing 'Window' header")
 	}
-	if !strings.Contains(output, "USAGE") {
-		t.Error("Empty table missing 'USAGE' header")
+	if !strings.Contains(output, "Usage") {
+		t.Error("Empty table missing 'Usage' header")
 	}
-	if !strings.Contains(output, "RESETS AT") {
-		t.Error("Empty table missing 'RESETS AT' header")
-	}
-
-	// Should be a valid table structure (has borders)
-	if !strings.Contains(output, "│") {
-		t.Error("Empty table missing column separator")
+	if !strings.Contains(output, "Resets At") {
+		t.Error("Empty table missing 'Resets At' header")
 	}
 }
 

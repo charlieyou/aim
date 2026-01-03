@@ -77,6 +77,7 @@ func main() {
 	sortRows(allRows)
 
 	allRows = formatGeminiRows(allRows)
+	allRows = groupProviderRows(allRows)
 
 	output.RenderTable(allRows, os.Stdout, *debug)
 }
@@ -205,6 +206,57 @@ func formatGeminiRows(rows []providers.UsageRow) []providers.UsageRow {
 			continue
 		}
 
+		formatted = append(formatted, row)
+	}
+
+	return formatted
+}
+
+func groupProviderRows(rows []providers.UsageRow) []providers.UsageRow {
+	groupedProviders := make(map[string]bool)
+	for _, row := range rows {
+		if row.IsGroup {
+			groupedProviders[row.Provider] = true
+		}
+	}
+
+	counts := make(map[string]int)
+	for _, row := range rows {
+		if row.IsGroup || strings.HasPrefix(row.Provider, "  ") || groupedProviders[row.Provider] {
+			continue
+		}
+		counts[row.Provider]++
+	}
+
+	formatted := make([]providers.UsageRow, 0, len(rows))
+	seenHeader := make(map[string]bool)
+
+	for _, row := range rows {
+		if row.IsGroup || strings.HasPrefix(row.Provider, "  ") {
+			formatted = append(formatted, row)
+			continue
+		}
+
+		if groupedProviders[row.Provider] {
+			row.Provider = ""
+			formatted = append(formatted, row)
+			continue
+		}
+
+		if counts[row.Provider] <= 1 {
+			formatted = append(formatted, row)
+			continue
+		}
+
+		if !seenHeader[row.Provider] {
+			formatted = append(formatted, providers.UsageRow{
+				Provider: row.Provider,
+				IsGroup:  true,
+			})
+			seenHeader[row.Provider] = true
+		}
+
+		row.Provider = ""
 		formatted = append(formatted, row)
 	}
 

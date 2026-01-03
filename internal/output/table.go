@@ -9,8 +9,6 @@ import (
 	"time"
 
 	"github.com/cyou/aim/internal/providers"
-	"github.com/mattn/go-runewidth"
-	"github.com/olekukonko/tablewriter"
 	"golang.org/x/term"
 )
 
@@ -22,11 +20,12 @@ const (
 	maxWarningLen   = 120
 	ansiReset       = "\x1b[0m"
 	ansiBold        = "\x1b[1m"
-	ansiDim         = "\x1b[2m"
+	ansiDim         = "\x1b[90m"
 	ansiRed         = "\x1b[31m"
 	ansiYellow      = "\x1b[33m"
 	ansiGreen       = "\x1b[32m"
 	ansiCyan        = "\x1b[36m"
+	ansiUnderline   = "\x1b[4m"
 )
 
 // generateBar creates an ASCII progress bar of the requested width.
@@ -78,7 +77,7 @@ func truncateRunes(s string, maxLen int) string {
 }
 
 func stringWidth(value string) int {
-	return runewidth.StringWidth(value)
+	return len([]rune(value))
 }
 
 func maxInt(a, b int) int {
@@ -112,12 +111,81 @@ func colorize(enabled bool, value string, codes ...string) string {
 func usageColor(percent float64) string {
 	switch {
 	case percent >= 80:
-		return ansiRed
+		return strings.Join([]string{ansiRed, ansiBold}, "")
 	case percent >= 50:
 		return ansiYellow
 	default:
 		return ansiGreen
 	}
+}
+
+func stripANSI(value string) string {
+	var builder strings.Builder
+	builder.Grow(len(value))
+	inEscape := false
+	for i := 0; i < len(value); i++ {
+		ch := value[i]
+		if inEscape {
+			if ch == 'm' {
+				inEscape = false
+			}
+			continue
+		}
+		if ch == 0x1b && i+1 < len(value) && value[i+1] == '[' {
+			inEscape = true
+			i++
+			continue
+		}
+		builder.WriteByte(ch)
+	}
+	return builder.String()
+}
+
+func visibleWidth(value string) int {
+	return len([]rune(stripANSI(value)))
+}
+
+func isBlankRow(row []string) bool {
+	if len(row) == 0 {
+		return true
+	}
+	for _, cell := range row {
+		if strings.TrimSpace(stripANSI(cell)) != "" {
+			return false
+		}
+	}
+	return true
+}
+
+func padRight(value string, width int) string {
+	padding := width - visibleWidth(value)
+	if padding <= 0 {
+		return value
+	}
+	return value + strings.Repeat(" ", padding)
+}
+
+func splitProvider(provider string) (string, string) {
+	start := strings.Index(provider, " (")
+	if start == -1 || !strings.HasSuffix(provider, ")") {
+		return provider, ""
+	}
+	name := strings.TrimSpace(provider[:start])
+	detail := strings.TrimSuffix(provider[start+2:], ")")
+	if name == "" || detail == "" {
+		return provider, ""
+	}
+	return name, detail
+}
+
+func formatProviderHeader(provider string, useColor bool) string {
+	name, detail := splitProvider(provider)
+	if detail == "" {
+		return colorize(useColor, name, ansiBold)
+	}
+	name = colorize(useColor, name, ansiBold)
+	detail = colorize(useColor, "("+detail+")", ansiDim)
+	return name + " " + detail
 }
 
 func terminalWidth(w io.Writer) (int, bool) {
@@ -189,15 +257,14 @@ func computeBarWidth(rows []providers.UsageRow, debug bool, termWidth int, now t
 	if debug {
 		columns++
 	}
-	separators := columns + 1
-	padding := columns * 2
+	gapWidth := 2
 
 	fixedContent := providerWidth + windowWidth + resetWidth
 	if debug {
 		fixedContent += debugWidth
 	}
 
-	available := termWidth - separators - padding - fixedContent
+	available := termWidth - fixedContent - gapWidth*(columns-1)
 	minUsageContent := maxInt(usageHeaderWidth, percentWidth+1+defaultBarWidth)
 	if available <= minUsageContent {
 		return defaultBarWidth
@@ -223,71 +290,90 @@ func RenderTable(rows []providers.UsageRow, w io.Writer, debug bool) {
 	}
 	useColor := isColorEnabled(w)
 
-	table := tablewriter.NewWriter(w)
-
-	// Configure table style for Unicode box-drawing
-	table.SetBorder(true)
-	table.SetCenterSeparator("┼")
-	table.SetColumnSeparator("│")
-	table.SetRowSeparator("─")
-	table.SetHeaderLine(true)
-	table.SetAlignment(tablewriter.ALIGN_LEFT)
-	table.SetAutoWrapText(false)
-
-	// Custom borders for Unicode
-	table.SetTablePadding(" ")
-	table.SetBorders(tablewriter.Border{
-		Left:   true,
-		Right:  true,
-		Top:    true,
-		Bottom: true,
-	})
-
-	// Set headers
 	headers := []string{"Provider", "Window", "Usage", "Resets At"}
 	if debug {
 		headers = append(headers, "Debug")
 	}
-	table.SetHeader(headers)
 
-	// Add rows
+	styledHeaders := make([]string, len(headers))
+	for i, header := range headers {
+		styledHeaders[i] = colorize(useColor, header, ansiDim, ansiUnderline)
+	}
+
+	colCount := len(headers)
+	rendered := make([][]string, 0, len(rows)+1)
+	rendered = append(rendered, styledHeaders)
+
 	for _, row := range rows {
+		cells := make([]string, 0, colCount)
+
 		if row.IsGroup {
-			provider := colorize(useColor, row.Provider, ansiBold, ansiCyan)
-			cells := []string{provider, "", "", ""}
+			provider := formatProviderHeader(row.Provider, useColor)
+			cells = append(cells, provider, "", "", "")
 			if debug {
 				cells = append(cells, "")
 			}
-			table.Append(cells)
+			rendered = append(rendered, cells)
 			continue
 		}
+
 		if row.IsWarning {
-			// Warning row: provider in first column, message in second column
-			// (remaining columns left empty as tablewriter doesn't support colspan)
 			warning := sanitizeWarning(row.WarningMsg)
 			warnText := "⚠ " + warning
 			warnText = colorize(useColor, warnText, ansiBold, ansiYellow)
-			cells := []string{row.Provider, warnText, "", ""}
-			if debug {
-				cells = append(cells, row.DebugInfo)
-			}
-			table.Append(cells)
-		} else {
-			// Normal row: all columns populated
-			usageStr := fmt.Sprintf("%s %d%%", generateBar(barWidth, row.UsagePercent), int(math.Round(row.UsagePercent)))
-			usageStr = colorize(useColor, usageStr, usageColor(row.UsagePercent))
-			resetStr := formatResetTimeFrom(row.ResetTime, now)
 			provider := row.Provider
 			if strings.HasPrefix(provider, "  ") {
 				provider = colorize(useColor, provider, ansiDim)
 			}
-			cells := []string{provider, row.Label, usageStr, resetStr}
+			cells = append(cells, provider, warnText, "", "")
 			if debug {
 				cells = append(cells, row.DebugInfo)
 			}
-			table.Append(cells)
+			rendered = append(rendered, cells)
+			continue
+		}
+
+		usageStr := fmt.Sprintf("%s %d%%", generateBar(barWidth, row.UsagePercent), int(math.Round(row.UsagePercent)))
+		usageStr = colorize(useColor, usageStr, usageColor(row.UsagePercent))
+		resetStr := formatResetTimeFrom(row.ResetTime, now)
+		if !row.ResetTime.IsZero() {
+			diff := row.ResetTime.Sub(now)
+			if diff > 0 && diff < 4*time.Hour {
+				resetStr = colorize(useColor, resetStr, ansiCyan)
+			} else if diff >= 4*time.Hour {
+				resetStr = colorize(useColor, resetStr, ansiDim)
+			}
+		}
+		provider := row.Provider
+		if strings.HasPrefix(provider, "  ") {
+			provider = colorize(useColor, provider, ansiDim)
+		}
+		cells = append(cells, provider, row.Label, usageStr, resetStr)
+		if debug {
+			cells = append(cells, row.DebugInfo)
+		}
+		rendered = append(rendered, cells)
+	}
+
+	colWidths := make([]int, colCount)
+	for _, row := range rendered {
+		for i, cell := range row {
+			colWidths[i] = maxInt(colWidths[i], visibleWidth(cell))
 		}
 	}
 
-	table.Render()
+	for _, row := range rendered {
+		var builder strings.Builder
+		if isBlankRow(row) {
+			fmt.Fprintln(w)
+			continue
+		}
+		for i, cell := range row {
+			if i > 0 {
+				builder.WriteString("  ")
+			}
+			builder.WriteString(padRight(cell, colWidths[i]))
+		}
+		fmt.Fprintln(w, builder.String())
+	}
 }

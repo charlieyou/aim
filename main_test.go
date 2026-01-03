@@ -87,3 +87,28 @@ func TestFormatGeminiRows_IndentsModelWarnings(t *testing.T) {
 		t.Fatalf("expected indented warning row, got %+v", formatted[1])
 	}
 }
+
+func TestGroupProviderRows_AddsHeaderAndBlanksProvider(t *testing.T) {
+	rows := []providers.UsageRow{
+		{Provider: "Claude (a)", Label: "5-hour"},
+		{Provider: "Claude (a)", Label: "7-day"},
+		{Provider: "Codex", Label: "5-hour"},
+	}
+
+	grouped := groupProviderRows(rows)
+	if len(grouped) != 4 {
+		t.Fatalf("expected 4 rows after grouping, got %d", len(grouped))
+	}
+
+	if !grouped[0].IsGroup || grouped[0].Provider != "Claude (a)" {
+		t.Fatalf("expected group header for Claude, got %+v", grouped[0])
+	}
+
+	if grouped[1].Provider != "" || grouped[2].Provider != "" {
+		t.Fatalf("expected grouped rows to blank provider, got %+v %+v", grouped[1], grouped[2])
+	}
+
+	if grouped[3].Provider != "Codex" {
+		t.Fatalf("expected non-grouped provider unchanged, got %+v", grouped[3])
+	}
+}
