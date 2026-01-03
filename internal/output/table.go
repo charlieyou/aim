@@ -4,15 +4,17 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"strings"
 
 	"github.com/cyou/aim/internal/providers"
 	"github.com/olekukonko/tablewriter"
 )
 
 const (
-	barWidth   = 6
-	fullBlock  = '█' // U+2588
-	emptyBlock = '░' // U+2591
+	barWidth      = 6
+	fullBlock     = '█' // U+2588
+	emptyBlock    = '░' // U+2591
+	maxWarningLen = 120
 )
 
 // generateBar creates an ASCII progress bar (6 chars wide).
@@ -38,6 +40,22 @@ func generateBar(percent float64) string {
 		}
 	}
 	return string(bar)
+}
+
+func sanitizeWarning(msg string) string {
+	cleaned := strings.Join(strings.Fields(msg), " ")
+	if cleaned == "" {
+		return cleaned
+	}
+	return truncateRunes(cleaned, maxWarningLen)
+}
+
+func truncateRunes(s string, maxLen int) string {
+	runes := []rune(s)
+	if len(runes) <= maxLen {
+		return s
+	}
+	return string(runes[:maxLen]) + "..."
 }
 
 // RenderTable renders usage rows as an ASCII table.
@@ -70,7 +88,8 @@ func RenderTable(rows []providers.UsageRow, w io.Writer) {
 		if row.IsWarning {
 			// Warning row: provider in first column, message in second column
 			// (remaining columns left empty as tablewriter doesn't support colspan)
-			table.Append([]string{row.Provider, "⚠ " + row.WarningMsg, "", ""})
+			warning := sanitizeWarning(row.WarningMsg)
+			table.Append([]string{row.Provider, "⚠ " + warning, "", ""})
 		} else {
 			// Normal row: all columns populated
 			usageStr := fmt.Sprintf("%s %d%%", generateBar(row.UsagePercent), int(math.Round(row.UsagePercent)))
