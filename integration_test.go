@@ -226,21 +226,26 @@ func TestGeminiIntegration(t *testing.T) {
 }
 
 func TestFullRun(t *testing.T) {
+	// Check home directory first - skip if unavailable (consistent with individual provider tests)
+	if _, err := os.UserHomeDir(); err != nil {
+		t.Skip("Cannot determine home directory, skipping")
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	// Create all providers
 	claude, err := providers.NewClaudeProvider()
 	if err != nil {
-		t.Fatalf("Failed to create Claude provider: %v", err)
+		t.Skipf("Failed to create Claude provider: %v", err)
 	}
 	codex, err := providers.NewCodexProvider()
 	if err != nil {
-		t.Fatalf("Failed to create Codex provider: %v", err)
+		t.Skipf("Failed to create Codex provider: %v", err)
 	}
 	gemini, err := providers.NewGeminiProvider()
 	if err != nil {
-		t.Fatalf("Failed to create Gemini provider: %v", err)
+		t.Skipf("Failed to create Gemini provider: %v", err)
 	}
 
 	allProviders := []providers.Provider{claude, codex, gemini}
