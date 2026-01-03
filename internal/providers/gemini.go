@@ -3,9 +3,11 @@ package providers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,13 +18,20 @@ const (
 	geminiDefaultBaseURL = "https://cloudcode-pa.googleapis.com"
 	geminiEndpoint       = "/v1internal:retrieveUserQuota"
 	geminiHTTPTimeout    = 30 * time.Second
+	geminiTokenURI       = "https://oauth2.googleapis.com/token"
+	geminiTokenSkew      = time.Minute
 )
 
 // GeminiAccount holds credentials for a single Gemini account
 type GeminiAccount struct {
-	Email     string
-	Token     string
-	ProjectID string
+	Email        string
+	Token        string
+	RefreshToken string
+	ClientID     string
+	ClientSecret string
+	TokenURI     string
+	TokenExpiry  time.Time
+	ProjectID    string
 }
 
 // GeminiProvider fetches usage data from Gemini (Google) quota API
@@ -35,9 +44,16 @@ type GeminiProvider struct {
 // geminiCredFile represents the structure of ~/.cli-proxy-api/*-*.json files
 type geminiCredFile struct {
 	Token struct {
-		AccessToken string `json:"access_token"`
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		ClientID     string `json:"client_id"`
+		ClientSecret string `json:"client_secret"`
+		TokenURI     string `json:"token_uri"`
+		Expiry       string `json:"expiry"`
 	} `json:"token"`
 	ProjectID string `json:"project_id"`
+	Email     string `json:"email"`
+	Type      string `json:"type"`
 }
 
 // geminiQuotaResponse represents the API response
@@ -52,6 +68,14 @@ type geminiQuotaBucket struct {
 	RemainingFraction float64 `json:"remainingFraction"`
 	ResetTime         string  `json:"resetTime"`
 }
+
+type geminiRefreshResponse struct {
+	AccessToken string `json:"access_token"`
+	ExpiresIn   int    `json:"expires_in"`
+	TokenType   string `json:"token_type"`
+}
+
+var errNotGeminiCred = errors.New("not gemini credential")
 
 // NewGeminiProvider creates a new GeminiProvider with default settings
 func NewGeminiProvider() (*GeminiProvider, error) {
@@ -145,8 +169,8 @@ func (g *GeminiProvider) loadCredentials() ([]GeminiAccount, []string) {
 			continue
 		}
 
-		// Skip files from other providers (e.g., codex-user@example.com.json)
-		if strings.HasPrefix(name, "codex-") {
+		// Skip files from other providers (e.g., codex-*, claude-*)
+		if strings.HasPrefix(name, "codex-") || strings.HasPrefix(name, "claude-") {
 			continue
 		}
 
@@ -161,6 +185,9 @@ func (g *GeminiProvider) loadCredentials() ([]GeminiAccount, []string) {
 		filePath := filepath.Join(credDir, name)
 		account, err := g.parseCredFile(filePath, baseName)
 		if err != nil {
+			if errors.Is(err, errNotGeminiCred) {
+				continue
+			}
 			// Report warning for files that look like Gemini credentials but fail to parse
 			warnings = append(warnings, fmt.Sprintf("Failed to parse %s: %v", name, err))
 			continue
@@ -184,6 +211,10 @@ func (g *GeminiProvider) parseCredFile(filePath, baseName string) (*GeminiAccoun
 		return nil, fmt.Errorf("invalid JSON: %w", err)
 	}
 
+	if cred.Type != "" && cred.Type != "gemini" {
+		return nil, errNotGeminiCred
+	}
+
 	// Validate required fields
 	if cred.Token.AccessToken == "" {
 		return nil, fmt.Errorf("missing token.access_token")
@@ -195,48 +226,65 @@ func (g *GeminiProvider) parseCredFile(filePath, baseName string) (*GeminiAccoun
 	// Extract email from filename by stripping the project_id suffix
 	// Filename format: {email}-{project_id}.json
 	// Example: user@example.com-gen-lang-client-0353902167.json
+	email := ""
 	suffix := "-" + cred.ProjectID
-	if !strings.HasSuffix(baseName, suffix) {
+	if strings.HasSuffix(baseName, suffix) {
+		email = strings.TrimSuffix(baseName, suffix)
+	} else if cred.Email != "" {
+		email = cred.Email
+	} else {
 		return nil, fmt.Errorf("filename does not match project_id in content")
 	}
-	email := strings.TrimSuffix(baseName, suffix)
+
+	tokenURI := cred.Token.TokenURI
+	if tokenURI == "" {
+		tokenURI = geminiTokenURI
+	}
+
+	var expiry time.Time
+	if cred.Token.Expiry != "" {
+		if parsed, err := time.Parse(time.RFC3339Nano, cred.Token.Expiry); err == nil {
+			expiry = parsed
+		}
+	}
 
 	return &GeminiAccount{
-		Email:     email,
-		Token:     cred.Token.AccessToken,
-		ProjectID: cred.ProjectID,
+		Email:        email,
+		Token:        cred.Token.AccessToken,
+		RefreshToken: cred.Token.RefreshToken,
+		ClientID:     cred.Token.ClientID,
+		ClientSecret: cred.Token.ClientSecret,
+		TokenURI:     tokenURI,
+		TokenExpiry:  expiry,
+		ProjectID:    cred.ProjectID,
 	}, nil
 }
 
 // fetchAccountUsage makes the API call for a single account
 func (g *GeminiProvider) fetchAccountUsage(ctx context.Context, account GeminiAccount) ([]UsageRow, error) {
-	// Build request
-	url := g.baseURL + geminiEndpoint
-	reqBody := fmt.Sprintf(`{"project":"%s"}`, account.ProjectID)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(reqBody))
+	token, err := g.accessTokenForAccount(ctx, account)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+		return nil, err
 	}
 
-	req.Header.Set("Authorization", "Bearer "+account.Token)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "ai-meter/0.1.0")
-
-	// Execute request
-	resp, err := g.client.Do(req)
+	body, status, err := g.doQuotaRequest(ctx, account, token)
 	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read response: %w", err)
+		return nil, err
 	}
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("API returned status %d: %s", resp.StatusCode, TruncateBody(body, 200))
+	if status == http.StatusUnauthorized && account.RefreshToken != "" {
+		token, err = g.refreshAccessToken(ctx, account)
+		if err != nil {
+			return nil, err
+		}
+		body, status, err = g.doQuotaRequest(ctx, account, token)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if status != http.StatusOK {
+		return nil, fmt.Errorf("API returned status %d: %s", status, TruncateBody(body, 200))
 	}
 
 	// Parse response
@@ -271,6 +319,96 @@ func (g *GeminiProvider) fetchAccountUsage(ctx context.Context, account GeminiAc
 	}
 
 	return rows, nil
+}
+
+func (g *GeminiProvider) accessTokenForAccount(ctx context.Context, account GeminiAccount) (string, error) {
+	if account.Token == "" {
+		return "", fmt.Errorf("missing access token")
+	}
+	if !account.TokenExpiry.IsZero() && time.Now().After(account.TokenExpiry.Add(-geminiTokenSkew)) {
+		if account.RefreshToken == "" {
+			return "", fmt.Errorf("access token expired and no refresh_token available")
+		}
+		return g.refreshAccessToken(ctx, account)
+	}
+	return account.Token, nil
+}
+
+func (g *GeminiProvider) refreshAccessToken(ctx context.Context, account GeminiAccount) (string, error) {
+	if account.RefreshToken == "" || account.ClientID == "" {
+		return "", fmt.Errorf("refresh token not available")
+	}
+
+	tokenURI := account.TokenURI
+	if tokenURI == "" {
+		tokenURI = geminiTokenURI
+	}
+
+	form := url.Values{}
+	form.Set("client_id", account.ClientID)
+	form.Set("refresh_token", account.RefreshToken)
+	form.Set("grant_type", "refresh_token")
+	if account.ClientSecret != "" {
+		form.Set("client_secret", account.ClientSecret)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tokenURI, strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", fmt.Errorf("failed to create token refresh request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := g.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("token refresh request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read token refresh response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("token refresh failed: status %d: %s", resp.StatusCode, TruncateBody(body, 200))
+	}
+
+	var refreshResp geminiRefreshResponse
+	if err := json.Unmarshal(body, &refreshResp); err != nil {
+		return "", fmt.Errorf("failed to parse token refresh response: %w", err)
+	}
+	if refreshResp.AccessToken == "" {
+		return "", fmt.Errorf("token refresh failed: empty access_token")
+	}
+
+	return refreshResp.AccessToken, nil
+}
+
+func (g *GeminiProvider) doQuotaRequest(ctx context.Context, account GeminiAccount, token string) ([]byte, int, error) {
+	url := g.baseURL + geminiEndpoint
+	reqBody := fmt.Sprintf(`{"project":"%s"}`, account.ProjectID)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(reqBody))
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "ai-meter/0.1.0")
+
+	resp, err := g.client.Do(req)
+	if err != nil {
+		return nil, 0, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, 0, fmt.Errorf("failed to read response: %w", err)
+	}
+
+	return body, resp.StatusCode, nil
 }
 
 // bucketToRow converts a quota bucket to a UsageRow
