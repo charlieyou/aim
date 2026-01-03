@@ -16,14 +16,82 @@ import (
 	"github.com/cyou/aim/internal/providers"
 )
 
-func TestClaudeIntegration(t *testing.T) {
+// hasClaudeCredentials checks if Claude credentials exist
+func hasClaudeCredentials() bool {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		t.Skip("Cannot determine home directory, skipping")
+		return false
+	}
+	credPath := filepath.Join(home, ".claude", ".credentials.json")
+	_, err = os.Stat(credPath)
+	return err == nil
+}
+
+// hasCodexCredentials checks if Codex credentials exist
+func hasCodexCredentials() bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
+	}
+	pattern := filepath.Join(home, ".cli-proxy-api", "codex-*.json")
+	matches, err := filepath.Glob(pattern)
+	return err == nil && len(matches) > 0
+}
+
+// hasGeminiCredentials checks if Gemini credentials exist
+func hasGeminiCredentials() bool {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return false
 	}
 
-	credPath := filepath.Join(home, ".claude", ".credentials.json")
-	if _, err := os.Stat(credPath); os.IsNotExist(err) {
+	credDir := filepath.Join(home, ".cli-proxy-api")
+	entries, err := os.ReadDir(credDir)
+	if err != nil {
+		return false
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		// Skip non-JSON files and other providers
+		if !strings.HasSuffix(name, ".json") {
+			continue
+		}
+		if strings.HasPrefix(name, "codex-") || strings.HasPrefix(name, "claude-") {
+			continue
+		}
+		// Check for hyphen pattern (gemini creds have format: email-projectid.json)
+		baseName := strings.TrimSuffix(name, ".json")
+		if !strings.Contains(baseName, "-") {
+			continue
+		}
+		// Verify it has Gemini-specific fields (project_id and token.access_token)
+		filePath := filepath.Join(credDir, name)
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			continue
+		}
+		var cred struct {
+			Token struct {
+				AccessToken string `json:"access_token"`
+			} `json:"token"`
+			ProjectID string `json:"project_id"`
+		}
+		if err := json.Unmarshal(data, &cred); err != nil {
+			continue
+		}
+		if cred.Token.AccessToken != "" && cred.ProjectID != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func TestClaudeIntegration(t *testing.T) {
+	if !hasClaudeCredentials() {
 		t.Skip("Claude credentials not found at ~/.claude/.credentials.json, skipping")
 	}
 
@@ -71,14 +139,7 @@ func TestClaudeIntegration(t *testing.T) {
 }
 
 func TestCodexIntegration(t *testing.T) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Skip("Cannot determine home directory, skipping")
-	}
-
-	pattern := filepath.Join(home, ".cli-proxy-api", "codex-*.json")
-	matches, err := filepath.Glob(pattern)
-	if err != nil || len(matches) == 0 {
+	if !hasCodexCredentials() {
 		t.Skip("No Codex credential files found matching ~/.cli-proxy-api/codex-*.json, skipping")
 	}
 
@@ -123,63 +184,7 @@ func TestCodexIntegration(t *testing.T) {
 }
 
 func TestGeminiIntegration(t *testing.T) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Skip("Cannot determine home directory, skipping")
-	}
-
-	// Check for Gemini credential files
-	// Gemini files have format: email-projectid.json with project_id field in content
-	credDir := filepath.Join(home, ".cli-proxy-api")
-	if _, err := os.Stat(credDir); os.IsNotExist(err) {
-		t.Skip("~/.cli-proxy-api directory not found, skipping")
-	}
-
-	entries, err := os.ReadDir(credDir)
-	if err != nil {
-		t.Skip("Cannot read ~/.cli-proxy-api directory, skipping")
-	}
-
-	hasGeminiCreds := false
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		// Skip non-JSON files and other providers
-		if !strings.HasSuffix(name, ".json") {
-			continue
-		}
-		if strings.HasPrefix(name, "codex-") || strings.HasPrefix(name, "claude-") {
-			continue
-		}
-		// Check for hyphen pattern (gemini creds have format: email-projectid.json)
-		baseName := strings.TrimSuffix(name, ".json")
-		if !strings.Contains(baseName, "-") {
-			continue
-		}
-		// Verify it has Gemini-specific fields (project_id and token.access_token)
-		filePath := filepath.Join(credDir, name)
-		data, err := os.ReadFile(filePath)
-		if err != nil {
-			continue
-		}
-		var cred struct {
-			Token struct {
-				AccessToken string `json:"access_token"`
-			} `json:"token"`
-			ProjectID string `json:"project_id"`
-		}
-		if err := json.Unmarshal(data, &cred); err != nil {
-			continue
-		}
-		if cred.Token.AccessToken != "" && cred.ProjectID != "" {
-			hasGeminiCreds = true
-			break
-		}
-	}
-
-	if !hasGeminiCreds {
+	if !hasGeminiCredentials() {
 		t.Skip("No valid Gemini credential files found in ~/.cli-proxy-api, skipping")
 	}
 
@@ -226,29 +231,52 @@ func TestGeminiIntegration(t *testing.T) {
 }
 
 func TestFullRun(t *testing.T) {
-	// Check home directory first - skip if unavailable (consistent with individual provider tests)
-	if _, err := os.UserHomeDir(); err != nil {
-		t.Skip("Cannot determine home directory, skipping")
+	// Check that at least one provider has credentials
+	// Skip if no providers are configured (consistent with per-provider test behavior)
+	hasClaude := hasClaudeCredentials()
+	hasCodex := hasCodexCredentials()
+	hasGemini := hasGeminiCredentials()
+
+	if !hasClaude && !hasCodex && !hasGemini {
+		t.Skip("No provider credentials found, skipping full run test")
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	// Create all providers
-	claude, err := providers.NewClaudeProvider()
-	if err != nil {
-		t.Skipf("Failed to create Claude provider: %v", err)
-	}
-	codex, err := providers.NewCodexProvider()
-	if err != nil {
-		t.Skipf("Failed to create Codex provider: %v", err)
-	}
-	gemini, err := providers.NewGeminiProvider()
-	if err != nil {
-		t.Skipf("Failed to create Gemini provider: %v", err)
+	// Create providers only for those with credentials
+	var allProviders []providers.Provider
+
+	if hasClaude {
+		claude, err := providers.NewClaudeProvider()
+		if err != nil {
+			t.Logf("Warning: Claude credentials exist but provider creation failed: %v", err)
+		} else {
+			allProviders = append(allProviders, claude)
+		}
 	}
 
-	allProviders := []providers.Provider{claude, codex, gemini}
+	if hasCodex {
+		codex, err := providers.NewCodexProvider()
+		if err != nil {
+			t.Logf("Warning: Codex credentials exist but provider creation failed: %v", err)
+		} else {
+			allProviders = append(allProviders, codex)
+		}
+	}
+
+	if hasGemini {
+		gemini, err := providers.NewGeminiProvider()
+		if err != nil {
+			t.Logf("Warning: Gemini credentials exist but provider creation failed: %v", err)
+		} else {
+			allProviders = append(allProviders, gemini)
+		}
+	}
+
+	if len(allProviders) == 0 {
+		t.Skip("All provider creations failed despite credentials existing, skipping")
+	}
 
 	var allRows []providers.UsageRow
 	for _, p := range allProviders {
