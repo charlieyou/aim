@@ -1,6 +1,9 @@
 # aim - AI Usage Meter
 
+![aim screenshot](aim.png)
+
 A CLI tool that displays usage quotas for multiple AI providers in a unified ASCII table.
+This tool is intended for use with [CLI Proxy API](https://github.com/router-for-me/CLIProxyAPI).
 
 ## Features
 
@@ -27,18 +30,31 @@ CGO_ENABLED=0 go build -ldflags="-s -w" -o aim .
 aim
 ```
 
+Show debug metadata (account id, plan, token fingerprint) for troubleshooting:
+
+```bash
+aim --debug
+```
+
+Show Gemini 2.x models (labels starting with `gemini-2`):
+
+```bash
+aim --gemini-old
+```
+
 Example output:
 
 ```
 ┌───────────────────────────────┬─────────┬─────────────┬─────────────────────┐
 │ Provider                      │ Window  │ Usage       │ Resets At           │
 ├───────────────────────────────┼─────────┼─────────────┼─────────────────────┤
-│ Claude                        │ 5-hour  │ ████░░ 24%  │ in 2h 15m           │
-│ Claude                        │ 7-day   │ ██████░ 36% │ Jan 8 07:00 PST     │
+│ Claude (user@ex.com)          │ 5-hour  │ ████░░ 24%  │ in 2h 15m           │
+│ Claude (user@ex.com)          │ 7-day   │ ██████░ 36% │ Jan 8 07:00 PST     │
 │ Codex (user@ex.com)           │ 5-hour  │ ░░░░░░ 3%   │ in 4h 24m           │
 │ Codex (user@ex.com)           │ 7-day   │ █░░░░░ 9%   │ Jan 8 12:30 PST     │
-│ Gemini (user@ex.com/my-proj)  │ 5-hour  │ ██░░░░ 12%  │ in 3h 45m           │
-│ Gemini (user@ex.com/my-proj)  │ 7-day   │ ███░░░ 18%  │ Jan 9 09:00 PST     │
+│ Gemini (user@ex.com/my-proj)  │         │             │                     │
+│   gemini-3-pro                │ 24-hour │ ██░░░░ 12%  │ in 3h 45m           │
+│   gemini-3-flash              │ 24-hour │ ███░░░ 18%  │ Jan 9 09:00 PST     │
 └───────────────────────────────┴─────────┴─────────────┴─────────────────────┘
 ```
 
@@ -46,11 +62,11 @@ Example output:
 
 | Provider | Path |
 |----------|------|
-| Claude   | `~/.claude/.credentials.json` |
+| Claude   | `~/.cli-proxy-api/claude-{email}.json` |
 | Codex    | `~/.cli-proxy-api/codex-{email}.json` |
 | Gemini   | `~/.cli-proxy-api/{email}-{project_id}.json` |
 
-The tool reads credentials from these locations automatically. It never modifies credential files.
+The tool reads credentials from these locations automatically. It only updates credential files when a token refresh succeeds.
 
 ## Time Display
 

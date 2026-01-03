@@ -2,7 +2,9 @@ package providers
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -23,16 +26,19 @@ const (
 
 // CodexAccount holds credentials for a single Codex account
 type CodexAccount struct {
-	Email        string
-	AccountID    string
-	Token        string
-	IDToken      string
-	RefreshToken string
-	ClientID     string
-	Scopes       []string
-	LastRefresh  time.Time
-	ExpiresAt    time.Time
-	LoadErr      string // Error message from loading credentials, if any
+	Email          string
+	AccountID      string
+	SourceName     string
+	DisplayName    string
+	Token          string
+	IDToken        string
+	RefreshToken   string
+	ClientID       string
+	Scopes         []string
+	LastRefresh    time.Time
+	ExpiresAt      time.Time
+	CredentialPath string
+	LoadErr        string // Error message from loading credentials, if any
 }
 
 // codexCredentials represents the JSON structure of credential files
@@ -111,9 +117,10 @@ func (c *CodexProvider) FetchUsage(ctx context.Context) ([]UsageRow, error) {
 		accountRows, err := c.fetchAccountUsage(ctx, account)
 		if err != nil {
 			rows = append(rows, UsageRow{
-				Provider:   fmt.Sprintf("Codex (%s)", account.Email),
+				Provider:   codexProviderName(account),
 				IsWarning:  true,
 				WarningMsg: err.Error(),
+				DebugInfo:  codexAccountDebug(account, ""),
 			})
 			continue
 		}
@@ -131,43 +138,93 @@ func (c *CodexProvider) loadCredentials() ([]CodexAccount, error) {
 		return nil, fmt.Errorf("failed to glob credentials: %w", err)
 	}
 
-	accountsByEmail := make(map[string]CodexAccount)
+	accountsByKey := make(map[string]CodexAccount)
 	var ordered []string
 	for _, path := range matches {
 		account, err := c.loadCredentialFile(path)
 		if err != nil {
 			// Return a partial account with email and error so we can report specific details
-			email := extractEmailFromFilename(filepath.Base(path))
+			sourceName := extractEmailFromFilename(filepath.Base(path))
 			account = CodexAccount{
-				Email:   email,
-				Token:   "", // Empty token signals a load error
-				LoadErr: err.Error(),
+				Email:      sourceName,
+				SourceName: sourceName,
+				Token:      "", // Empty token signals a load error
+				LoadErr:    err.Error(),
 			}
 		}
 
-		key := strings.ToLower(account.Email)
-		if key == "" {
-			key = strings.ToLower(filepath.Base(path))
-		}
-		if existing, ok := accountsByEmail[key]; ok {
-			accountsByEmail[key] = preferCodexAccount(existing, account)
+		key := codexAccountKey(account, filepath.Base(path))
+		if existing, ok := accountsByKey[key]; ok {
+			accountsByKey[key] = preferCodexAccount(existing, account)
 			continue
 		}
-		accountsByEmail[key] = account
+		accountsByKey[key] = account
 		ordered = append(ordered, key)
 	}
 
 	accounts := make([]CodexAccount, 0, len(ordered))
 	for _, key := range ordered {
-		accounts = append(accounts, accountsByEmail[key])
+		accounts = append(accounts, accountsByKey[key])
 	}
 
+	applyCodexDisplayNames(accounts)
+
 	return accounts, nil
+}
+
+func codexAccountKey(account CodexAccount, filename string) string {
+	if account.AccountID != "" {
+		return "account_id:" + strings.ToLower(account.AccountID)
+	}
+	if account.SourceName != "" {
+		return "source:" + strings.ToLower(account.SourceName)
+	}
+	if account.Email != "" {
+		return "email:" + strings.ToLower(account.Email)
+	}
+	return "file:" + strings.ToLower(filename)
+}
+
+func applyCodexDisplayNames(accounts []CodexAccount) {
+	emailCounts := make(map[string]int)
+	emailHasAltSource := make(map[string]bool)
+	for _, account := range accounts {
+		if account.Email == "" {
+			continue
+		}
+		key := strings.ToLower(account.Email)
+		emailCounts[key]++
+		if account.SourceName != "" && !strings.EqualFold(account.SourceName, account.Email) {
+			emailHasAltSource[key] = true
+		}
+	}
+
+	for i := range accounts {
+		label := accounts[i].Email
+		if label == "" {
+			label = accounts[i].SourceName
+		}
+		if label == "" {
+			label = "unknown"
+		}
+
+		key := strings.ToLower(accounts[i].Email)
+		if key != "" && emailCounts[key] > 1 {
+			if accounts[i].SourceName != "" && !strings.EqualFold(accounts[i].SourceName, accounts[i].Email) {
+				label = accounts[i].SourceName
+			} else if !emailHasAltSource[key] && accounts[i].AccountID != "" {
+				label = fmt.Sprintf("%s#%s", accounts[i].Email, shortID(accounts[i].AccountID))
+			}
+		}
+
+		accounts[i].DisplayName = label
+	}
 }
 
 // loadCredentialFile loads a single credential file
 func (c *CodexProvider) loadCredentialFile(path string) (CodexAccount, error) {
 	filename := filepath.Base(path)
+	sourceName := extractEmailFromFilename(filename)
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -185,7 +242,7 @@ func (c *CodexProvider) loadCredentialFile(path string) (CodexAccount, error) {
 
 	email := creds.Email
 	if email == "" {
-		email = extractEmailFromFilename(filename)
+		email = sourceName
 	}
 	lastRefresh, _ := parseCodexTime(creds.LastRefresh)
 	expiresAt, _ := parseCodexTime(creds.Expired)
@@ -193,15 +250,17 @@ func (c *CodexProvider) loadCredentialFile(path string) (CodexAccount, error) {
 	clientID, scopes := extractCodexAuthDetails(creds.AccessToken, creds.IDToken)
 
 	return CodexAccount{
-		Email:        email,
-		AccountID:    creds.AccountID,
-		Token:        creds.AccessToken,
-		IDToken:      creds.IDToken,
-		RefreshToken: creds.RefreshToken,
-		ClientID:     clientID,
-		Scopes:       scopes,
-		LastRefresh:  lastRefresh,
-		ExpiresAt:    expiresAt,
+		Email:          email,
+		AccountID:      creds.AccountID,
+		SourceName:     sourceName,
+		Token:          creds.AccessToken,
+		IDToken:        creds.IDToken,
+		RefreshToken:   creds.RefreshToken,
+		ClientID:       clientID,
+		Scopes:         scopes,
+		LastRefresh:    lastRefresh,
+		ExpiresAt:      expiresAt,
+		CredentialPath: path,
 	}, nil
 }
 
@@ -221,6 +280,35 @@ func parseCodexTime(value string) (time.Time, error) {
 		return ts, nil
 	}
 	return time.Parse(time.RFC3339, value)
+}
+
+func shortID(value string) string {
+	if len(value) <= 6 {
+		return value
+	}
+	return value[:6]
+}
+
+func codexTokenFingerprint(token string) string {
+	if token == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:4])
+}
+
+func codexAccountDebug(account CodexAccount, planType string) string {
+	parts := make([]string, 0, 3)
+	if account.AccountID != "" {
+		parts = append(parts, "acct:"+shortID(account.AccountID))
+	}
+	if planType != "" {
+		parts = append(parts, "plan:"+planType)
+	}
+	if fp := codexTokenFingerprint(account.Token); fp != "" {
+		parts = append(parts, "token:"+fp)
+	}
+	return strings.Join(parts, " ")
 }
 
 func preferCodexAccount(existing, candidate CodexAccount) CodexAccount {
@@ -274,10 +362,14 @@ func (c *CodexProvider) fetchAccountUsage(ctx context.Context, account CodexAcco
 	if err != nil {
 		var statusErr APIStatusError
 		if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusUnauthorized && account.RefreshToken != "" {
+			debugf("Codex", "attempting token refresh after status=%d for %s", statusErr.StatusCode, codexProviderName(account))
 			refreshed, refreshErr := c.refreshAccessToken(ctx, account)
 			if refreshErr != nil {
+				debugf("Codex", "token refresh failed for %s: %v", codexProviderName(account), refreshErr)
 				return nil, refreshErr
 			}
+			debugf("Codex", "token refresh succeeded, retrying usage API for %s", codexProviderName(account))
+			account.Token = refreshed
 			apiResp, err = c.fetchUsageWithToken(ctx, refreshed)
 		}
 	}
@@ -285,7 +377,8 @@ func (c *CodexProvider) fetchAccountUsage(ctx context.Context, account CodexAcco
 		return nil, err
 	}
 
-	providerName := fmt.Sprintf("Codex (%s)", account.Email)
+	providerName := codexProviderName(account)
+	debugInfo := codexAccountDebug(account, apiResp.PlanType)
 
 	return []UsageRow{
 		{
@@ -293,14 +386,31 @@ func (c *CodexProvider) fetchAccountUsage(ctx context.Context, account CodexAcco
 			Label:        "5-hour",
 			UsagePercent: apiResp.RateLimit.PrimaryWindow.UsedPercent,
 			ResetTime:    time.Unix(apiResp.RateLimit.PrimaryWindow.ResetAt, 0),
+			DebugInfo:    debugInfo,
 		},
 		{
 			Provider:     providerName,
 			Label:        "7-day",
 			UsagePercent: apiResp.RateLimit.SecondaryWindow.UsedPercent,
 			ResetTime:    time.Unix(apiResp.RateLimit.SecondaryWindow.ResetAt, 0),
+			DebugInfo:    debugInfo,
 		},
 	}, nil
+}
+
+func codexProviderName(account CodexAccount) string {
+	label := account.DisplayName
+	if label == "" {
+		if account.Email != "" {
+			label = account.Email
+		} else if account.SourceName != "" {
+			label = account.SourceName
+		}
+	}
+	if label == "" {
+		return "Codex"
+	}
+	return fmt.Sprintf("Codex (%s)", label)
 }
 
 func (c *CodexProvider) fetchUsageWithToken(ctx context.Context, token string) (*codexAPIResponse, error) {
@@ -322,6 +432,7 @@ func (c *CodexProvider) fetchUsageWithToken(ctx context.Context, token string) (
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		debugf("Codex", "usage API non-200 status=%d body=%q", resp.StatusCode, debugBody(body))
 		return nil, APIStatusError{
 			StatusCode: resp.StatusCode,
 			Body:       TruncateBody(body, 200),
@@ -366,16 +477,19 @@ func (c *CodexProvider) refreshAccessToken(ctx context.Context, account CodexAcc
 
 	resp, err := c.client.Do(req)
 	if err != nil {
+		debugf("Codex", "token refresh request failed: %v", err)
 		return "", fmt.Errorf("token refresh request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		debugf("Codex", "failed to read token refresh response: %v", err)
 		return "", fmt.Errorf("failed to read token refresh response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		debugf("Codex", "token refresh non-200 status=%d body=%q", resp.StatusCode, debugBody(body))
 		return "", APIStatusError{
 			StatusCode: resp.StatusCode,
 			Body:       TruncateBody(body, 200),
@@ -383,28 +497,79 @@ func (c *CodexProvider) refreshAccessToken(ctx context.Context, account CodexAcc
 	}
 
 	var refreshResp struct {
-		AccessToken string `json:"access_token"`
+		Raw map[string]any
 	}
-	if err := json.Unmarshal(body, &refreshResp); err != nil {
+	if err := json.Unmarshal(body, &refreshResp.Raw); err != nil {
+		debugf("Codex", "failed to parse token refresh response: %v body=%q", err, debugBody(body))
 		return "", fmt.Errorf("failed to parse token refresh response: %w", err)
 	}
-	if refreshResp.AccessToken == "" {
-		var raw map[string]any
-		if err := json.Unmarshal(body, &raw); err == nil {
-			if v, ok := raw["access_token"].(string); ok && v != "" {
-				refreshResp.AccessToken = v
-			} else if v, ok := raw["accessToken"].(string); ok && v != "" {
-				refreshResp.AccessToken = v
-			} else if v, ok := raw["token"].(string); ok && v != "" {
-				refreshResp.AccessToken = v
-			}
-		}
-	}
-	if refreshResp.AccessToken == "" {
+	accessToken := stringFromMap(refreshResp.Raw, "access_token", "accessToken", "token")
+	if accessToken == "" {
+		debugf("Codex", "token refresh response missing access_token")
 		return "", fmt.Errorf("token refresh failed: empty access_token")
 	}
 
-	return refreshResp.AccessToken, nil
+	refreshToken := stringFromMap(refreshResp.Raw, "refresh_token", "refreshToken")
+	idToken := stringFromMap(refreshResp.Raw, "id_token", "idToken")
+	expiresIn := int64FromMap(refreshResp.Raw, "expires_in", "expiresIn")
+
+	if account.CredentialPath == "" {
+		return "", fmt.Errorf("credential path not available for refresh")
+	}
+	if err := updateCodexCredentialFile(account.CredentialPath, accessToken, refreshToken, idToken, expiresIn); err != nil {
+		return "", err
+	}
+
+	return accessToken, nil
+}
+
+func updateCodexCredentialFile(path, accessToken, refreshToken, idToken string, expiresIn int64) error {
+	now := time.Now()
+	return updateJSONCredentials(path, func(raw map[string]any) error {
+		raw["access_token"] = accessToken
+		if refreshToken != "" {
+			raw["refresh_token"] = refreshToken
+		}
+		if idToken != "" {
+			raw["id_token"] = idToken
+		}
+		raw["last_refresh"] = formatCredentialTime(now)
+		if expiresIn > 0 {
+			raw["expired"] = formatCredentialTime(now.Add(time.Duration(expiresIn) * time.Second))
+		}
+		return nil
+	})
+}
+
+func stringFromMap(raw map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if val, ok := raw[key]; ok {
+			if str, ok := val.(string); ok && str != "" {
+				return str
+			}
+		}
+	}
+	return ""
+}
+
+func int64FromMap(raw map[string]any, keys ...string) int64 {
+	for _, key := range keys {
+		if val, ok := raw[key]; ok {
+			switch typed := val.(type) {
+			case float64:
+				return int64(typed)
+			case int64:
+				return typed
+			case int:
+				return int64(typed)
+			case string:
+				if parsed, err := strconv.ParseInt(typed, 10, 64); err == nil {
+					return parsed
+				}
+			}
+		}
+	}
+	return 0
 }
 
 func extractCodexAuthDetails(accessToken, idToken string) (string, []string) {

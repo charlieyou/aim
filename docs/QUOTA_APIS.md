@@ -57,17 +57,14 @@ anthropic-beta: oauth-2025-04-20
 
 ### Credential Location
 ```
-~/.claude/.credentials.json
+~/.cli-proxy-api/claude-{email}.json
 ```
 ```json
 {
-  "claudeAiOauth": {
-    "accessToken": "...",
-    "refreshToken": "...",
-    "expiresAt": 1767396165210,
-    "subscriptionType": "max",
-    "rateLimitTier": "default_claude_max_20x"
-  }
+  "access_token": "...",
+  "refresh_token": "...",
+  "id_token": "...",
+  "type": "claude"
 }
 ```
 

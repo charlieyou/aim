@@ -19,19 +19,19 @@ const (
 	geminiEndpoint       = "/v1internal:retrieveUserQuota"
 	geminiHTTPTimeout    = 30 * time.Second
 	geminiTokenURI       = "https://oauth2.googleapis.com/token"
-	geminiTokenSkew      = time.Minute
 )
 
 // GeminiAccount holds credentials for a single Gemini account
 type GeminiAccount struct {
-	Email        string
-	Token        string
-	RefreshToken string
-	ClientID     string
-	ClientSecret string
-	TokenURI     string
-	TokenExpiry  time.Time
-	ProjectID    string
+	Email          string
+	Token          string
+	RefreshToken   string
+	ClientID       string
+	ClientSecret   string
+	TokenURI       string
+	TokenExpiry    time.Time
+	ProjectID      string
+	CredentialPath string
 }
 
 // GeminiProvider fetches usage data from Gemini (Google) quota API
@@ -244,14 +244,15 @@ func (g *GeminiProvider) parseCredFile(filePath, baseName string) (*GeminiAccoun
 	}
 
 	return &GeminiAccount{
-		Email:        email,
-		Token:        cred.Token.AccessToken,
-		RefreshToken: cred.Token.RefreshToken,
-		ClientID:     cred.Token.ClientID,
-		ClientSecret: cred.Token.ClientSecret,
-		TokenURI:     tokenURI,
-		TokenExpiry:  expiry,
-		ProjectID:    cred.ProjectID,
+		Email:          email,
+		Token:          cred.Token.AccessToken,
+		RefreshToken:   cred.Token.RefreshToken,
+		ClientID:       cred.Token.ClientID,
+		ClientSecret:   cred.Token.ClientSecret,
+		TokenURI:       tokenURI,
+		TokenExpiry:    expiry,
+		ProjectID:      cred.ProjectID,
+		CredentialPath: filePath,
 	}, nil
 }
 
@@ -268,10 +269,13 @@ func (g *GeminiProvider) fetchAccountUsage(ctx context.Context, account GeminiAc
 	}
 
 	if status == http.StatusUnauthorized && account.RefreshToken != "" {
+		debugf("Gemini", "attempting token refresh after status=%d for %s", status, fmt.Sprintf("Gemini (%s)", account.Email))
 		token, err = g.refreshAccessToken(ctx, account)
 		if err != nil {
+			debugf("Gemini", "token refresh failed for %s: %v", fmt.Sprintf("Gemini (%s)", account.Email), err)
 			return nil, err
 		}
+		debugf("Gemini", "token refresh succeeded, retrying quota API for %s", fmt.Sprintf("Gemini (%s)", account.Email))
 		body, status, err = g.doQuotaRequest(ctx, account, token)
 		if err != nil {
 			return nil, err
@@ -279,6 +283,7 @@ func (g *GeminiProvider) fetchAccountUsage(ctx context.Context, account GeminiAc
 	}
 
 	if status != http.StatusOK {
+		debugf("Gemini", "quota API non-200 status=%d body=%q", status, debugBody(body))
 		return nil, fmt.Errorf("API returned status %d: %s", status, TruncateBody(body, 200))
 	}
 
@@ -320,12 +325,6 @@ func (g *GeminiProvider) accessTokenForAccount(ctx context.Context, account Gemi
 	if account.Token == "" {
 		return "", fmt.Errorf("missing access token")
 	}
-	if !account.TokenExpiry.IsZero() && time.Now().After(account.TokenExpiry.Add(-geminiTokenSkew)) {
-		if account.RefreshToken == "" {
-			return "", fmt.Errorf("access token expired and no refresh_token available")
-		}
-		return g.refreshAccessToken(ctx, account)
-	}
 	return account.Token, nil
 }
 
@@ -355,28 +354,58 @@ func (g *GeminiProvider) refreshAccessToken(ctx context.Context, account GeminiA
 
 	resp, err := g.client.Do(req)
 	if err != nil {
+		debugf("Gemini", "token refresh request failed: %v", err)
 		return "", fmt.Errorf("token refresh request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		debugf("Gemini", "failed to read token refresh response: %v", err)
 		return "", fmt.Errorf("failed to read token refresh response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		debugf("Gemini", "token refresh non-200 status=%d body=%q", resp.StatusCode, debugBody(body))
 		return "", fmt.Errorf("token refresh failed: status %d: %s", resp.StatusCode, TruncateBody(body, 200))
 	}
 
 	var refreshResp geminiRefreshResponse
 	if err := json.Unmarshal(body, &refreshResp); err != nil {
+		debugf("Gemini", "failed to parse token refresh response: %v body=%q", err, debugBody(body))
 		return "", fmt.Errorf("failed to parse token refresh response: %w", err)
 	}
 	if refreshResp.AccessToken == "" {
+		debugf("Gemini", "token refresh response missing access_token")
 		return "", fmt.Errorf("token refresh failed: empty access_token")
 	}
 
+	if account.CredentialPath == "" {
+		return "", fmt.Errorf("credential path not available for refresh")
+	}
+	if err := updateGeminiCredentialFile(account.CredentialPath, refreshResp); err != nil {
+		return "", err
+	}
+
 	return refreshResp.AccessToken, nil
+}
+
+func updateGeminiCredentialFile(path string, refreshResp geminiRefreshResponse) error {
+	now := time.Now()
+	return updateJSONCredentials(path, func(raw map[string]any) error {
+		tokenRaw, ok := raw["token"].(map[string]any)
+		if !ok {
+			return fmt.Errorf("missing token object in credentials file")
+		}
+
+		tokenRaw["access_token"] = refreshResp.AccessToken
+		if refreshResp.ExpiresIn > 0 {
+			tokenRaw["expiry"] = formatCredentialTime(now.Add(time.Duration(refreshResp.ExpiresIn) * time.Second))
+		}
+
+		raw["token"] = tokenRaw
+		return nil
+	})
 }
 
 func (g *GeminiProvider) doQuotaRequest(ctx context.Context, account GeminiAccount, token string) ([]byte, int, error) {
@@ -394,12 +423,14 @@ func (g *GeminiProvider) doQuotaRequest(ctx context.Context, account GeminiAccou
 
 	resp, err := g.client.Do(req)
 	if err != nil {
+		debugf("Gemini", "quota request failed: %v", err)
 		return nil, 0, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		debugf("Gemini", "failed to read quota response: %v", err)
 		return nil, 0, fmt.Errorf("failed to read response: %w", err)
 	}
 

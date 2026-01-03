@@ -643,7 +643,8 @@ func TestGeminiProvider_RefreshesTokenOn401(t *testing.T) {
 		"project_id": "proj",
 	}
 	data, _ := json.Marshal(cred)
-	if err := os.WriteFile(filepath.Join(credDir, "user@test.com-proj.json"), data, 0600); err != nil {
+	credPath := filepath.Join(credDir, "user@test.com-proj.json")
+	if err := os.WriteFile(credPath, data, 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -669,6 +670,21 @@ func TestGeminiProvider_RefreshesTokenOn401(t *testing.T) {
 	}
 	if quotaCalls != 2 {
 		t.Errorf("Expected 2 quota calls (401 + retry), got %d", quotaCalls)
+	}
+
+	updated, err := os.ReadFile(credPath)
+	if err != nil {
+		t.Fatalf("failed to read updated credentials: %v", err)
+	}
+	var updatedCred geminiCredFile
+	if err := json.Unmarshal(updated, &updatedCred); err != nil {
+		t.Fatalf("failed to parse updated credentials: %v", err)
+	}
+	if updatedCred.Token.AccessToken != "new-token" {
+		t.Errorf("updated access_token = %q, want %q", updatedCred.Token.AccessToken, "new-token")
+	}
+	if updatedCred.Token.Expiry == "" {
+		t.Error("expected token.expiry to be set in credentials")
 	}
 }
 

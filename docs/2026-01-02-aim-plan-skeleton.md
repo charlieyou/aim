@@ -146,7 +146,7 @@ Additional risks:
 | Spec AC | Covered By |
 |---------|------------|
 | Home directory resolution via `os.UserHomeDir()` | Task 2 |
-| Claude credentials from `~/.claude/.credentials.json` | Task 2 |
+| Claude credentials from `~/.cli-proxy-api/claude-*.json` | Task 2 |
 | Codex credentials via glob `~/.cli-proxy-api/codex-*.json` | Task 2 |
 | Claude 5-hour + 7-day rows | Task 3 |
 | Codex 5-hour + 7-day per account | Task 4 |
@@ -160,7 +160,7 @@ Additional risks:
 
 ## Rollback Strategy (Plan-Level)
 - Each task is independently rollback-able by reverting its files
-- No external state is modified (read-only tool)
+- External state is only modified when a token refresh succeeds
 - No database migrations or infrastructure changes
 
 ## Open Questions

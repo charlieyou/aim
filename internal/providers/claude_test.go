@@ -3,7 +3,6 @@ package providers
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -60,13 +59,13 @@ func TestClaudeProvider_FetchUsage_Success(t *testing.T) {
 
 	// Create temp credentials
 	tempDir := t.TempDir()
-	claudeDir := filepath.Join(tempDir, ".claude")
-	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+	credDir := filepath.Join(tempDir, ".cli-proxy-api")
+	if err := os.MkdirAll(credDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 
-	credsPath := filepath.Join(claudeDir, ".credentials.json")
-	credsJSON := `{"claudeAiOauth": {"accessToken": "test-token", "expiresAt": 1798761600000}}`
+	credsPath := filepath.Join(credDir, "claude-user@example.com.json")
+	credsJSON := `{"access_token": "test-token", "refresh_token": "refresh-token", "type": "claude"}`
 	if err := os.WriteFile(credsPath, []byte(credsJSON), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -88,8 +87,8 @@ func TestClaudeProvider_FetchUsage_Success(t *testing.T) {
 	}
 
 	// Check 5-hour row
-	if rows[0].Provider != "Claude" {
-		t.Errorf("row[0].Provider = %q, want %q", rows[0].Provider, "Claude")
+	if rows[0].Provider != "Claude (user@example.com)" {
+		t.Errorf("row[0].Provider = %q, want %q", rows[0].Provider, "Claude (user@example.com)")
 	}
 	if rows[0].Label != "5-hour" {
 		t.Errorf("row[0].Label = %q, want %q", rows[0].Label, "5-hour")
@@ -102,8 +101,8 @@ func TestClaudeProvider_FetchUsage_Success(t *testing.T) {
 	}
 
 	// Check 7-day row
-	if rows[1].Provider != "Claude" {
-		t.Errorf("row[1].Provider = %q, want %q", rows[1].Provider, "Claude")
+	if rows[1].Provider != "Claude (user@example.com)" {
+		t.Errorf("row[1].Provider = %q, want %q", rows[1].Provider, "Claude (user@example.com)")
 	}
 	if rows[1].Label != "7-day" {
 		t.Errorf("row[1].Label = %q, want %q", rows[1].Label, "7-day")
@@ -151,20 +150,21 @@ func TestClaudeProvider_FetchUsage_MissingCreds(t *testing.T) {
 	if rows[0].Provider != "Claude" {
 		t.Errorf("row[0].Provider = %q, want %q", rows[0].Provider, "Claude")
 	}
-	expectedPath := filepath.Join(tempDir, ".claude", ".credentials.json")
-	if rows[0].WarningMsg != "credentials file not found: "+expectedPath {
-		t.Errorf("row[0].WarningMsg = %q, want to contain path %q", rows[0].WarningMsg, expectedPath)
+	expectedPattern := filepath.Join(tempDir, ".cli-proxy-api", "claude-*.json")
+	expectedMsg := "No credential files found matching " + expectedPattern
+	if rows[0].WarningMsg != expectedMsg {
+		t.Errorf("row[0].WarningMsg = %q, want %q", rows[0].WarningMsg, expectedMsg)
 	}
 }
 
 func TestClaudeProvider_FetchUsage_MalformedCreds(t *testing.T) {
 	tempDir := t.TempDir()
-	claudeDir := filepath.Join(tempDir, ".claude")
-	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+	credDir := filepath.Join(tempDir, ".cli-proxy-api")
+	if err := os.MkdirAll(credDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 
-	credsPath := filepath.Join(claudeDir, ".credentials.json")
+	credsPath := filepath.Join(credDir, "claude-user@example.com.json")
 	if err := os.WriteFile(credsPath, []byte("not valid json"), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -197,13 +197,13 @@ func TestClaudeProvider_FetchUsage_MalformedCreds(t *testing.T) {
 
 func TestClaudeProvider_FetchUsage_EmptyToken(t *testing.T) {
 	tempDir := t.TempDir()
-	claudeDir := filepath.Join(tempDir, ".claude")
-	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+	credDir := filepath.Join(tempDir, ".cli-proxy-api")
+	if err := os.MkdirAll(credDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 
-	credsPath := filepath.Join(claudeDir, ".credentials.json")
-	credsJSON := `{"claudeAiOauth": {"accessToken": "", "expiresAt": 1798761600000}}`
+	credsPath := filepath.Join(credDir, "claude-user@example.com.json")
+	credsJSON := `{"access_token": "", "refresh_token": "refresh-token", "type": "claude"}`
 	if err := os.WriteFile(credsPath, []byte(credsJSON), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -241,13 +241,13 @@ func TestClaudeProvider_FetchUsage_APIError(t *testing.T) {
 
 	// Create temp credentials
 	tempDir := t.TempDir()
-	claudeDir := filepath.Join(tempDir, ".claude")
-	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+	credDir := filepath.Join(tempDir, ".cli-proxy-api")
+	if err := os.MkdirAll(credDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 
-	credsPath := filepath.Join(claudeDir, ".credentials.json")
-	credsJSON := `{"claudeAiOauth": {"accessToken": "invalid-token", "expiresAt": 1798761600000}}`
+	credsPath := filepath.Join(credDir, "claude-user@example.com.json")
+	credsJSON := `{"access_token": "invalid-token", "type": "claude"}`
 	if err := os.WriteFile(credsPath, []byte(credsJSON), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -270,10 +270,55 @@ func TestClaudeProvider_FetchUsage_APIError(t *testing.T) {
 	if !rows[0].IsWarning {
 		t.Error("row[0].IsWarning = false, want true")
 	}
-	if rows[0].Provider != "Claude" {
-		t.Errorf("row[0].Provider = %q, want %q", rows[0].Provider, "Claude")
+	if rows[0].Provider != "Claude (user@example.com)" {
+		t.Errorf("row[0].Provider = %q, want %q", rows[0].Provider, "Claude (user@example.com)")
 	}
-	expectedMsg := `API returned status 401: {"error": "unauthorized"}`
+	expectedMsg := "authentication failed (token may be expired)"
+	if rows[0].WarningMsg != expectedMsg {
+		t.Errorf("row[0].WarningMsg = %q, want %q", rows[0].WarningMsg, expectedMsg)
+	}
+}
+
+func TestClaudeProvider_FetchUsage_APIError403Revoked(t *testing.T) {
+	// Create mock server that returns 403 with revoked message
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"type":"error","error":{"type":"permission_error","message":"OAuth token has been revoked."}}`))
+	}))
+	defer server.Close()
+
+	// Create temp credentials
+	tempDir := t.TempDir()
+	credDir := filepath.Join(tempDir, ".cli-proxy-api")
+	if err := os.MkdirAll(credDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	credsPath := filepath.Join(credDir, "claude-user@example.com.json")
+	credsJSON := `{"access_token": "invalid-token", "type": "claude"}`
+	if err := os.WriteFile(credsPath, []byte(credsJSON), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &ClaudeProvider{
+		homeDir: tempDir,
+		baseURL: server.URL,
+		client:  &http.Client{Timeout: 5 * time.Second},
+	}
+
+	rows, err := p.FetchUsage(context.Background())
+	if err != nil {
+		t.Fatalf("FetchUsage() error = %v", err)
+	}
+
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 warning row, got %d", len(rows))
+	}
+
+	if !rows[0].IsWarning {
+		t.Error("row[0].IsWarning = false, want true")
+	}
+	expectedMsg := "authentication failed (token revoked)"
 	if rows[0].WarningMsg != expectedMsg {
 		t.Errorf("row[0].WarningMsg = %q, want %q", rows[0].WarningMsg, expectedMsg)
 	}
@@ -333,14 +378,13 @@ func TestClaudeProvider_FetchUsage_RefreshesTokenOn401(t *testing.T) {
 	defer usageServer.Close()
 
 	tempDir := t.TempDir()
-	claudeDir := filepath.Join(tempDir, ".claude")
-	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+	credDir := filepath.Join(tempDir, ".cli-proxy-api")
+	if err := os.MkdirAll(credDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 
-	credsPath := filepath.Join(claudeDir, ".credentials.json")
-	expiresAt := time.Now().Add(2 * time.Hour).UnixMilli()
-	credsJSON := fmt.Sprintf(`{"claudeAiOauth": {"accessToken": "old-token", "refreshToken": "refresh-token", "expiresAt": %d, "scopes": ["user:profile","user:inference","user:sessions:claude_code"]}}`, expiresAt)
+	credsPath := filepath.Join(credDir, "claude-user@example.com.json")
+	credsJSON := `{"access_token": "old-token", "refresh_token": "refresh-token", "type": "claude"}`
 	if err := os.WriteFile(credsPath, []byte(credsJSON), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -371,6 +415,27 @@ func TestClaudeProvider_FetchUsage_RefreshesTokenOn401(t *testing.T) {
 			t.Errorf("unexpected warning row: %s", row.WarningMsg)
 		}
 	}
+
+	updated, err := os.ReadFile(credsPath)
+	if err != nil {
+		t.Fatalf("failed to read updated credentials: %v", err)
+	}
+	var updatedCred claudeCredentials
+	if err := json.Unmarshal(updated, &updatedCred); err != nil {
+		t.Fatalf("failed to parse updated credentials: %v", err)
+	}
+	if updatedCred.AccessToken != "new-token" {
+		t.Errorf("updated access_token = %q, want %q", updatedCred.AccessToken, "new-token")
+	}
+	if updatedCred.RefreshToken != "new-refresh" {
+		t.Errorf("updated refresh_token = %q, want %q", updatedCred.RefreshToken, "new-refresh")
+	}
+	if updatedCred.LastRefresh == "" {
+		t.Error("expected last_refresh to be set in credentials")
+	}
+	if updatedCred.Expired == "" {
+		t.Error("expected expired to be set in credentials")
+	}
 }
 
 func TestClaudeProvider_FetchUsage_APIError500(t *testing.T) {
@@ -383,13 +448,13 @@ func TestClaudeProvider_FetchUsage_APIError500(t *testing.T) {
 
 	// Create temp credentials
 	tempDir := t.TempDir()
-	claudeDir := filepath.Join(tempDir, ".claude")
-	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+	credDir := filepath.Join(tempDir, ".cli-proxy-api")
+	if err := os.MkdirAll(credDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 
-	credsPath := filepath.Join(claudeDir, ".credentials.json")
-	credsJSON := `{"claudeAiOauth": {"accessToken": "test-token", "expiresAt": 1798761600000}}`
+	credsPath := filepath.Join(credDir, "claude-user@example.com.json")
+	credsJSON := `{"access_token": "test-token", "refresh_token": "refresh-token", "type": "claude"}`
 	if err := os.WriteFile(credsPath, []byte(credsJSON), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -438,13 +503,13 @@ func TestClaudeProvider_FetchUsage_MalformedTimestamp(t *testing.T) {
 
 	// Create temp credentials
 	tempDir := t.TempDir()
-	claudeDir := filepath.Join(tempDir, ".claude")
-	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+	credDir := filepath.Join(tempDir, ".cli-proxy-api")
+	if err := os.MkdirAll(credDir, 0755); err != nil {
 		t.Fatal(err)
 	}
 
-	credsPath := filepath.Join(claudeDir, ".credentials.json")
-	credsJSON := `{"claudeAiOauth": {"accessToken": "test-token", "expiresAt": 1798761600000}}`
+	credsPath := filepath.Join(credDir, "claude-user@example.com.json")
+	credsJSON := `{"access_token": "test-token", "refresh_token": "refresh-token", "type": "claude"}`
 	if err := os.WriteFile(credsPath, []byte(credsJSON), 0600); err != nil {
 		t.Fatal(err)
 	}

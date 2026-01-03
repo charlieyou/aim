@@ -69,7 +69,7 @@ func TestGenerateBar(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := generateBar(tt.percent)
+			got := generateBar(defaultBarWidth, tt.percent)
 			if got != tt.want {
 				t.Errorf("generateBar(%v) = %q, want %q", tt.percent, got, tt.want)
 			}
@@ -95,7 +95,7 @@ func TestRenderTable_NormalRows(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	RenderTable(rows, &buf)
+	RenderTable(rows, &buf, false)
 	output := buf.String()
 
 	// Verify table structure (tablewriter uppercases headers)
@@ -137,17 +137,41 @@ func TestRenderTable_NormalRows(t *testing.T) {
 	}
 }
 
+func TestRenderTable_DebugColumn(t *testing.T) {
+	now := time.Now()
+	rows := []providers.UsageRow{
+		{
+			Provider:     "Codex (user@example.com)",
+			Label:        "5-hour",
+			UsagePercent: 12,
+			ResetTime:    now.Add(1 * time.Hour),
+			DebugInfo:    "acct:abc123 plan:pro token:deadbeef",
+		},
+	}
+
+	var buf bytes.Buffer
+	RenderTable(rows, &buf, true)
+	output := buf.String()
+
+	if !strings.Contains(output, "DEBUG") {
+		t.Error("Output missing 'DEBUG' header")
+	}
+	if !strings.Contains(output, "acct:abc123") {
+		t.Error("Output missing debug info")
+	}
+}
+
 func TestRenderTable_WarningRow(t *testing.T) {
 	rows := []providers.UsageRow{
 		{
 			Provider:   "Claude",
 			IsWarning:  true,
-			WarningMsg: "credentials not found at ~/.claude/.credentials.json",
+			WarningMsg: "No credential files found matching ~/.cli-proxy-api/claude-*.json",
 		},
 	}
 
 	var buf bytes.Buffer
-	RenderTable(rows, &buf)
+	RenderTable(rows, &buf, false)
 	output := buf.String()
 
 	// Verify warning indicator
@@ -156,7 +180,7 @@ func TestRenderTable_WarningRow(t *testing.T) {
 	}
 
 	// Verify warning message
-	if !strings.Contains(output, "credentials not found") {
+	if !strings.Contains(output, "credential files found matching") {
 		t.Error("Output missing warning message")
 	}
 
@@ -189,7 +213,7 @@ func TestRenderTable_MixedRows(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	RenderTable(rows, &buf)
+	RenderTable(rows, &buf, false)
 	output := buf.String()
 
 	// Verify all providers are present
@@ -224,7 +248,7 @@ func TestRenderTable_EmptyRows(t *testing.T) {
 	var rows []providers.UsageRow
 
 	var buf bytes.Buffer
-	RenderTable(rows, &buf)
+	RenderTable(rows, &buf, false)
 	output := buf.String()
 
 	// Empty table should still have headers (tablewriter uppercases headers)
@@ -259,7 +283,7 @@ func TestRenderTable_UsageBarFormatting(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	RenderTable(rows, &buf)
+	RenderTable(rows, &buf, false)
 	output := buf.String()
 
 	// Verify bar characters are present (empty bar for 0%)
@@ -283,7 +307,7 @@ func TestRenderTable_FullUsage(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	RenderTable(rows, &buf)
+	RenderTable(rows, &buf, false)
 	output := buf.String()
 
 	// Verify full bar for 100%

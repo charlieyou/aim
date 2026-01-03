@@ -257,6 +257,68 @@ func TestCodexProvider_FetchUsage_MultipleAccounts(t *testing.T) {
 	}
 }
 
+func TestCodexProvider_FetchUsage_DuplicateEmailDisplaysBoth(t *testing.T) {
+	resetTime := time.Now().Add(2 * time.Hour).Unix()
+	callCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		resp := codexAPIResponse{PlanType: "pro"}
+		resp.RateLimit.PrimaryWindow.UsedPercent = 10.0
+		resp.RateLimit.PrimaryWindow.ResetAt = resetTime
+		resp.RateLimit.SecondaryWindow.UsedPercent = 5.0
+		resp.RateLimit.SecondaryWindow.ResetAt = resetTime + 3600
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	tmpDir := t.TempDir()
+	credDir := filepath.Join(tmpDir, ".cli-proxy-api")
+	if err := os.MkdirAll(credDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	teamCred := `{"access_token":"token-team","refresh_token":"refresh","email":"user@example.com","account_id":"acct-team"}`
+	mainCred := `{"access_token":"token-main","refresh_token":"refresh","email":"user@example.com","account_id":"acct-main"}`
+
+	if err := os.WriteFile(filepath.Join(credDir, "codex-user@example.com-team.json"), []byte(teamCred), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(credDir, "codex-user@example.com.json"), []byte(mainCred), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	provider := &CodexProvider{
+		homeDir: tmpDir,
+		baseURL: server.URL,
+		client:  &http.Client{Timeout: 5 * time.Second},
+	}
+
+	rows, err := provider.FetchUsage(context.Background())
+	if err != nil {
+		t.Fatalf("FetchUsage() error = %v", err)
+	}
+
+	if len(rows) != 4 {
+		t.Fatalf("FetchUsage() returned %d rows, want 4 (two accounts)", len(rows))
+	}
+	if callCount != 2 {
+		t.Errorf("API called %d times, want 2", callCount)
+	}
+
+	providers := map[string]bool{}
+	for _, row := range rows {
+		providers[row.Provider] = true
+	}
+	if !providers["Codex (user@example.com)"] {
+		t.Errorf("missing provider Codex (user@example.com)")
+	}
+	if !providers["Codex (user@example.com-team)"] {
+		t.Errorf("missing provider Codex (user@example.com-team)")
+	}
+}
+
 func TestCodexProvider_FetchUsage_NoCreds(t *testing.T) {
 	tmpDir := t.TempDir()
 	credDir := filepath.Join(tmpDir, ".cli-proxy-api")
@@ -402,8 +464,14 @@ func TestCodexProvider_FetchUsage_RefreshesTokenOn401(t *testing.T) {
 		}
 		body, _ := io.ReadAll(r.Body)
 		values, _ := url.ParseQuery(string(body))
+		if values.Get("grant_type") != "refresh_token" {
+			t.Errorf("expected grant_type refresh_token, got %q", values.Get("grant_type"))
+		}
 		if values.Get("refresh_token") != "refresh-token" {
 			t.Errorf("expected refresh_token refresh-token, got %q", values.Get("refresh_token"))
+		}
+		if values.Get("client_id") != codexDefaultClientID {
+			t.Errorf("expected client_id %q, got %q", codexDefaultClientID, values.Get("client_id"))
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -467,6 +535,24 @@ func TestCodexProvider_FetchUsage_RefreshesTokenOn401(t *testing.T) {
 		if row.IsWarning {
 			t.Errorf("unexpected warning row: %s", row.WarningMsg)
 		}
+	}
+
+	updated, err := os.ReadFile(credFile)
+	if err != nil {
+		t.Fatalf("failed to read updated credentials: %v", err)
+	}
+	var updatedCred codexCredentials
+	if err := json.Unmarshal(updated, &updatedCred); err != nil {
+		t.Fatalf("failed to parse updated credentials: %v", err)
+	}
+	if updatedCred.AccessToken != "new-token" {
+		t.Errorf("updated access_token = %q, want %q", updatedCred.AccessToken, "new-token")
+	}
+	if updatedCred.RefreshToken != "refresh-token" {
+		t.Errorf("updated refresh_token = %q, want %q", updatedCred.RefreshToken, "refresh-token")
+	}
+	if updatedCred.LastRefresh == "" {
+		t.Error("expected last_refresh to be set in credentials")
 	}
 }
 

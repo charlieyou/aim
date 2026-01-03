@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"flag"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,6 +14,11 @@ import (
 )
 
 func main() {
+	debug := flag.Bool("debug", false, "Show debug metadata for usage rows")
+	showGeminiOld := flag.Bool("gemini-old", false, "Show Gemini 2.x models (gemini-2*)")
+	flag.Parse()
+	providers.SetDebug(*debug)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
@@ -64,10 +71,14 @@ func main() {
 
 	wg.Wait()
 
+	allRows = filterRows(allRows, *showGeminiOld)
+
 	// Sort rows
 	sortRows(allRows)
 
-	output.RenderTable(allRows, os.Stdout)
+	allRows = formatGeminiRows(allRows)
+
+	output.RenderTable(allRows, os.Stdout, *debug)
 }
 
 // sortRows sorts usage rows by:
@@ -131,4 +142,71 @@ func sortRows(rows []providers.UsageRow) {
 		// Quaternary: Alphabetical by Label
 		return rows[i].Label < rows[j].Label
 	})
+}
+
+func filterRows(rows []providers.UsageRow, showGeminiOld bool) []providers.UsageRow {
+	if showGeminiOld {
+		return rows
+	}
+
+	filtered := make([]providers.UsageRow, 0, len(rows))
+	for _, row := range rows {
+		if row.IsWarning {
+			filtered = append(filtered, row)
+			continue
+		}
+		if strings.HasPrefix(row.Provider, "Gemini") && isGemini2xModel(row.Label) {
+			continue
+		}
+		filtered = append(filtered, row)
+	}
+	return filtered
+}
+
+func isGemini2xModel(label string) bool {
+	return strings.HasPrefix(strings.ToLower(label), "gemini-2")
+}
+
+func formatGeminiRows(rows []providers.UsageRow) []providers.UsageRow {
+	const (
+		geminiPrefix = "Gemini"
+		windowLabel  = "24-hour"
+		modelIndent  = "  "
+	)
+
+	formatted := make([]providers.UsageRow, 0, len(rows))
+	seenHeader := make(map[string]bool)
+
+	for _, row := range rows {
+		if !strings.HasPrefix(row.Provider, geminiPrefix) {
+			formatted = append(formatted, row)
+			continue
+		}
+
+		// Account-level warnings or generic Gemini warnings remain unchanged.
+		if row.IsWarning && row.Label == "" {
+			formatted = append(formatted, row)
+			continue
+		}
+
+		// Model-level rows are grouped under the account header.
+		if row.Label != "" {
+			if !seenHeader[row.Provider] {
+				formatted = append(formatted, providers.UsageRow{
+					Provider: row.Provider,
+					IsGroup:  true,
+				})
+				seenHeader[row.Provider] = true
+			}
+
+			row.Provider = modelIndent + row.Label
+			row.Label = windowLabel
+			formatted = append(formatted, row)
+			continue
+		}
+
+		formatted = append(formatted, row)
+	}
+
+	return formatted
 }

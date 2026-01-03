@@ -22,9 +22,9 @@ func hasClaudeCredentials() bool {
 	if err != nil {
 		return false
 	}
-	credPath := filepath.Join(home, ".claude", ".credentials.json")
-	_, err = os.Stat(credPath)
-	return err == nil
+	pattern := filepath.Join(home, ".cli-proxy-api", "claude-*.json")
+	matches, err := filepath.Glob(pattern)
+	return err == nil && len(matches) > 0
 }
 
 // hasCodexCredentials checks if Codex credentials exist
@@ -99,7 +99,7 @@ func hasGeminiCredentials() bool {
 
 func TestClaudeIntegration(t *testing.T) {
 	if !hasClaudeCredentials() {
-		t.Skip("Claude credentials not found at ~/.claude/.credentials.json, skipping")
+		t.Skip("No Claude credential files found matching ~/.cli-proxy-api/claude-*.json, skipping")
 	}
 
 	provider, err := providers.NewClaudeProvider()
@@ -305,7 +305,7 @@ func TestFullRun(t *testing.T) {
 
 	// Capture stdout
 	var buf bytes.Buffer
-	output.RenderTable(allRows, &buf)
+	output.RenderTable(allRows, &buf, false)
 
 	tableOutput := buf.String()
 	t.Logf("Table output:\n%s", tableOutput)
