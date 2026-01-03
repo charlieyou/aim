@@ -281,6 +281,16 @@ func computeBarWidth(rows []providers.UsageRow, debug bool, termWidth int, now t
 	return barWidth
 }
 
+// PrintCredentialSource prints dimmed header showing credential source
+func PrintCredentialSource(w io.Writer, source string) {
+	useColor := isColorEnabled(w)
+	if useColor {
+		fmt.Fprintf(w, "%sCredentials: %s%s\n\n", ansiDim, source, ansiReset)
+	} else {
+		fmt.Fprintf(w, "Credentials: %s\n\n", source)
+	}
+}
+
 // RenderTable renders usage rows as an ASCII table.
 func RenderTable(rows []providers.UsageRow, w io.Writer, debug bool) {
 	now := time.Now()

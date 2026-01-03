@@ -19,6 +19,11 @@ func main() {
 	flag.Parse()
 	providers.SetDebug(*debug)
 
+	// Detect and display credential source
+	homeDir, _ := os.UserHomeDir()
+	credSource := providers.DetectCredentialSource(homeDir)
+	output.PrintCredentialSource(os.Stdout, credSource.DisplayName())
+
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
