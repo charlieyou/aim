@@ -615,3 +615,215 @@ func TestNewCodexProvider(t *testing.T) {
 		t.Error("homeDir is empty")
 	}
 }
+
+func TestCodexLoadNativeCredentials_ValidFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	codexDir := filepath.Join(tmpDir, ".codex")
+	if err := os.MkdirAll(codexDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create valid auth.json with a mock JWT
+	// JWT payload: {"exp": 1893456000, "aud": "test-client"}
+	mockJWT := "eyJhbGciOiJIUzI1NiJ9.eyJleHAiOjE4OTM0NTYwMDAsImF1ZCI6InRlc3QtY2xpZW50In0.sig"
+	authData := `{
+		"tokens": {
+			"access_token": "` + mockJWT + `",
+			"refresh_token": "rt_test",
+			"account_id": "acct-123"
+		},
+		"last_refresh": "2025-12-28T21:55:29.182552327Z"
+	}`
+	if err := os.WriteFile(filepath.Join(codexDir, "auth.json"), []byte(authData), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	provider := &CodexProvider{homeDir: tmpDir}
+	accounts, err := provider.loadNativeCredentials()
+	if err != nil {
+		t.Fatalf("loadNativeCredentials() error = %v", err)
+	}
+	if len(accounts) != 1 {
+		t.Fatalf("got %d accounts, want 1", len(accounts))
+	}
+
+	acc := accounts[0]
+	if !acc.IsNative {
+		t.Error("IsNative should be true")
+	}
+	if acc.DisplayName != "Codex (native)" {
+		t.Errorf("DisplayName = %q, want %q", acc.DisplayName, "Codex (native)")
+	}
+	if acc.AccountID != "acct-123" {
+		t.Errorf("AccountID = %q, want %q", acc.AccountID, "acct-123")
+	}
+	if acc.RefreshToken != "rt_test" {
+		t.Errorf("RefreshToken = %q, want %q", acc.RefreshToken, "rt_test")
+	}
+	if acc.Token != mockJWT {
+		t.Errorf("Token mismatch")
+	}
+}
+
+func TestCodexLoadNativeCredentials_JWTExpiry(t *testing.T) {
+	tmpDir := t.TempDir()
+	codexDir := filepath.Join(tmpDir, ".codex")
+	if err := os.MkdirAll(codexDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// JWT with exp claim: 1893456000 (2030-01-01 00:00:00 UTC)
+	mockJWT := "eyJhbGciOiJIUzI1NiJ9.eyJleHAiOjE4OTM0NTYwMDB9.sig"
+	authData := `{"tokens": {"access_token": "` + mockJWT + `"}}`
+	if err := os.WriteFile(filepath.Join(codexDir, "auth.json"), []byte(authData), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	provider := &CodexProvider{homeDir: tmpDir}
+	accounts, err := provider.loadNativeCredentials()
+	if err != nil {
+		t.Fatalf("loadNativeCredentials() error = %v", err)
+	}
+	if len(accounts) != 1 {
+		t.Fatalf("got %d accounts, want 1", len(accounts))
+	}
+
+	expectedExpiry := time.Unix(1893456000, 0)
+	if !accounts[0].ExpiresAt.Equal(expectedExpiry) {
+		t.Errorf("ExpiresAt = %v, want %v", accounts[0].ExpiresAt, expectedExpiry)
+	}
+}
+
+func TestCodexLoadNativeCredentials_MalformedJWT(t *testing.T) {
+	tmpDir := t.TempDir()
+	codexDir := filepath.Join(tmpDir, ".codex")
+	if err := os.MkdirAll(codexDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Invalid JWT (not base64 decodable)
+	authData := `{"tokens": {"access_token": "not.a.valid.jwt"}}`
+	if err := os.WriteFile(filepath.Join(codexDir, "auth.json"), []byte(authData), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	provider := &CodexProvider{homeDir: tmpDir}
+	accounts, err := provider.loadNativeCredentials()
+	if err != nil {
+		t.Fatalf("loadNativeCredentials() should not error on malformed JWT: %v", err)
+	}
+	if len(accounts) != 1 {
+		t.Fatalf("got %d accounts, want 1", len(accounts))
+	}
+
+	// ExpiresAt should be zero value
+	if !accounts[0].ExpiresAt.IsZero() {
+		t.Errorf("ExpiresAt should be zero for malformed JWT, got %v", accounts[0].ExpiresAt)
+	}
+}
+
+func TestCodexLoadNativeCredentials_MissingFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	provider := &CodexProvider{homeDir: tmpDir}
+
+	accounts, err := provider.loadNativeCredentials()
+	if err != nil {
+		t.Fatalf("loadNativeCredentials() error = %v", err)
+	}
+	if accounts != nil {
+		t.Errorf("got %v accounts, want nil", accounts)
+	}
+}
+
+func TestCodexLoadCredentials_UsesGlobalSource(t *testing.T) {
+	// Test that loadCredentials respects DetectCredentialSource
+	tmpDir := t.TempDir()
+
+	// Create native credentials (no proxy dir)
+	codexDir := filepath.Join(tmpDir, ".codex")
+	if err := os.MkdirAll(codexDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	mockJWT := "eyJhbGciOiJIUzI1NiJ9.eyJleHAiOjE4OTM0NTYwMDB9.sig"
+	authData := `{"tokens": {"access_token": "` + mockJWT + `"}}`
+	if err := os.WriteFile(filepath.Join(codexDir, "auth.json"), []byte(authData), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	provider := &CodexProvider{homeDir: tmpDir}
+	accounts, err := provider.loadCredentials()
+	if err != nil {
+		t.Fatalf("loadCredentials() error = %v", err)
+	}
+
+	// Should load native since no proxy dir exists
+	if len(accounts) != 1 {
+		t.Fatalf("got %d accounts, want 1", len(accounts))
+	}
+	if !accounts[0].IsNative {
+		t.Error("should have loaded native credentials")
+	}
+}
+
+func TestCodexLoadCredentials_PrefersProxy(t *testing.T) {
+	// When proxy dir has credentials, use proxy even if native exists
+	tmpDir := t.TempDir()
+
+	// Create proxy credentials
+	proxyDir := filepath.Join(tmpDir, ".cli-proxy-api")
+	if err := os.MkdirAll(proxyDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	proxyData := `{
+		"access_token": "proxy-token",
+		"refresh_token": "rt_proxy",
+		"email": "proxy@example.com"
+	}`
+	if err := os.WriteFile(filepath.Join(proxyDir, "codex-proxy@example.com.json"), []byte(proxyData), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Also create native credentials
+	codexDir := filepath.Join(tmpDir, ".codex")
+	if err := os.MkdirAll(codexDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	mockJWT := "eyJhbGciOiJIUzI1NiJ9.eyJleHAiOjE4OTM0NTYwMDB9.sig"
+	nativeData := `{"tokens": {"access_token": "` + mockJWT + `"}}`
+	if err := os.WriteFile(filepath.Join(codexDir, "auth.json"), []byte(nativeData), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	provider := &CodexProvider{homeDir: tmpDir}
+	accounts, err := provider.loadCredentials()
+	if err != nil {
+		t.Fatalf("loadCredentials() error = %v", err)
+	}
+
+	// Should load proxy credentials since proxy dir exists
+	if len(accounts) != 1 {
+		t.Fatalf("got %d accounts, want 1", len(accounts))
+	}
+	if accounts[0].IsNative {
+		t.Error("should have loaded proxy credentials, not native")
+	}
+	if accounts[0].Email != "proxy@example.com" {
+		t.Errorf("Email = %q, want %q", accounts[0].Email, "proxy@example.com")
+	}
+}
+
+func TestCodexRefreshAccessToken_NativeSkip(t *testing.T) {
+	provider := &CodexProvider{}
+	account := CodexAccount{
+		IsNative:     true,
+		RefreshToken: "rt_test",
+	}
+
+	_, err := provider.refreshAccessToken(context.Background(), account)
+	if err == nil {
+		t.Fatal("expected error for native account")
+	}
+	if !strings.Contains(err.Error(), "Re-authenticate with codex") {
+		t.Errorf("error = %q, want message about re-authentication", err.Error())
+	}
+}

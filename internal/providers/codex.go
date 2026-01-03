@@ -40,6 +40,7 @@ type CodexAccount struct {
 	ExpiresAt      time.Time
 	CredentialPath string
 	LoadErr        string // Error message from loading credentials, if any
+	IsNative       bool   // true when loaded from ~/.codex/ instead of proxy
 }
 
 // codexCredentials represents the JSON structure of credential files
@@ -133,6 +134,11 @@ func (c *CodexProvider) FetchUsage(ctx context.Context) ([]UsageRow, error) {
 
 // loadCredentials discovers and loads all Codex credential files
 func (c *CodexProvider) loadCredentials() ([]CodexAccount, error) {
+	source := DetectCredentialSource(c.homeDir)
+	if source == SourceNative {
+		return c.loadNativeCredentials()
+	}
+
 	pattern := filepath.Join(c.homeDir, ".cli-proxy-api", "codex-*.json")
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
@@ -160,6 +166,65 @@ func (c *CodexProvider) loadCredentials() ([]CodexAccount, error) {
 	applyCodexDisplayNames(accounts)
 
 	return accounts, nil
+}
+
+// codexNativeCredentials represents the JSON structure of ~/.codex/auth.json
+type codexNativeCredentials struct {
+	Tokens struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		AccountID    string `json:"account_id"`
+	} `json:"tokens"`
+	LastRefresh string `json:"last_refresh"`
+}
+
+// loadNativeCredentials loads credentials from ~/.codex/auth.json
+func (c *CodexProvider) loadNativeCredentials() ([]CodexAccount, error) {
+	path := filepath.Join(c.homeDir, ".codex", "auth.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		// Silent return if file missing/unreadable
+		return nil, nil
+	}
+
+	var creds codexNativeCredentials
+	if err := json.Unmarshal(data, &creds); err != nil {
+		return nil, nil
+	}
+
+	if creds.Tokens.AccessToken == "" {
+		return nil, nil
+	}
+
+	account := CodexAccount{
+		AccountID:      creds.Tokens.AccountID,
+		Token:          creds.Tokens.AccessToken,
+		RefreshToken:   creds.Tokens.RefreshToken,
+		CredentialPath: path,
+		IsNative:       true,
+		DisplayName:    "Codex (native)",
+	}
+
+	// Extract expiry from JWT
+	claims, err := decodeJWTClaims(creds.Tokens.AccessToken)
+	if err == nil {
+		if exp, ok := claims["exp"].(float64); ok {
+			account.ExpiresAt = time.Unix(int64(exp), 0)
+		}
+	}
+	// If JWT decode fails or exp missing, ExpiresAt stays at zero value
+
+	// Parse last_refresh if present
+	if creds.LastRefresh != "" {
+		if t, err := time.Parse(time.RFC3339Nano, creds.LastRefresh); err == nil {
+			account.LastRefresh = t
+		}
+	}
+
+	// Extract client ID and scopes from token
+	account.ClientID, account.Scopes = extractFromToken(creds.Tokens.AccessToken)
+
+	return []CodexAccount{account}, nil
 }
 
 func applyCodexDisplayNames(accounts []CodexAccount) {
@@ -387,6 +452,10 @@ func (c *CodexProvider) fetchUsageWithToken(ctx context.Context, token string) (
 }
 
 func (c *CodexProvider) refreshAccessToken(ctx context.Context, account CodexAccount) (string, error) {
+	if account.IsNative {
+		return "", fmt.Errorf("token expired. Re-authenticate with codex to refresh")
+	}
+
 	if account.RefreshToken == "" {
 		return "", fmt.Errorf("refresh token not available")
 	}
