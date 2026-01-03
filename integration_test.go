@@ -63,11 +63,6 @@ func hasGeminiCredentials() bool {
 		if strings.HasPrefix(name, "codex-") || strings.HasPrefix(name, "claude-") {
 			continue
 		}
-		// Check for hyphen pattern (gemini creds have format: email-projectid.json)
-		baseName := strings.TrimSuffix(name, ".json")
-		if !strings.Contains(baseName, "-") {
-			continue
-		}
 		// Verify it has Gemini-specific fields (project_id and token.access_token)
 		filePath := filepath.Join(credDir, name)
 		data, err := os.ReadFile(filePath)
@@ -79,11 +74,23 @@ func hasGeminiCredentials() bool {
 				AccessToken string `json:"access_token"`
 			} `json:"token"`
 			ProjectID string `json:"project_id"`
+			Email     string `json:"email"`
+			Type      string `json:"type"`
 		}
 		if err := json.Unmarshal(data, &cred); err != nil {
 			continue
 		}
-		if cred.Token.AccessToken != "" && cred.ProjectID != "" {
+		// Skip if type is set and not "gemini"
+		if cred.Type != "" && cred.Type != "gemini" {
+			continue
+		}
+		if cred.Token.AccessToken == "" || cred.ProjectID == "" {
+			continue
+		}
+		// Valid credential if filename matches pattern OR has email field
+		baseName := strings.TrimSuffix(name, ".json")
+		suffix := "-" + cred.ProjectID
+		if strings.HasSuffix(baseName, suffix) || cred.Email != "" {
 			return true
 		}
 	}
