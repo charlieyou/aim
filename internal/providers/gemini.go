@@ -174,12 +174,7 @@ func (g *GeminiProvider) loadCredentials() ([]GeminiAccount, []string) {
 			continue
 		}
 
-		// Check for the pattern: must have at least one hyphen before .json
 		baseName := strings.TrimSuffix(name, ".json")
-		lastHyphenIdx := strings.LastIndex(baseName, "-")
-		if lastHyphenIdx < 0 {
-			continue
-		}
 
 		// Read and parse the file
 		filePath := filepath.Join(credDir, name)
@@ -233,7 +228,7 @@ func (g *GeminiProvider) parseCredFile(filePath, baseName string) (*GeminiAccoun
 	} else if cred.Email != "" {
 		email = cred.Email
 	} else {
-		return nil, fmt.Errorf("filename does not match project_id in content")
+		return nil, errNotGeminiCred
 	}
 
 	tokenURI := cred.Token.TokenURI

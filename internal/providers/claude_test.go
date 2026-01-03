@@ -2,6 +2,8 @@ package providers
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -63,7 +65,7 @@ func TestClaudeProvider_FetchUsage_Success(t *testing.T) {
 	}
 
 	credsPath := filepath.Join(claudeDir, ".credentials.json")
-	credsJSON := `{"claudeAiOauth": {"accessToken": "test-token", "expiresAt": 1767396165210}}`
+	credsJSON := `{"claudeAiOauth": {"accessToken": "test-token", "expiresAt": 1798761600000}}`
 	if err := os.WriteFile(credsPath, []byte(credsJSON), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +202,7 @@ func TestClaudeProvider_FetchUsage_EmptyToken(t *testing.T) {
 	}
 
 	credsPath := filepath.Join(claudeDir, ".credentials.json")
-	credsJSON := `{"claudeAiOauth": {"accessToken": "", "expiresAt": 1767396165210}}`
+	credsJSON := `{"claudeAiOauth": {"accessToken": "", "expiresAt": 1798761600000}}`
 	if err := os.WriteFile(credsPath, []byte(credsJSON), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +246,7 @@ func TestClaudeProvider_FetchUsage_APIError(t *testing.T) {
 	}
 
 	credsPath := filepath.Join(claudeDir, ".credentials.json")
-	credsJSON := `{"claudeAiOauth": {"accessToken": "invalid-token", "expiresAt": 1767396165210}}`
+	credsJSON := `{"claudeAiOauth": {"accessToken": "invalid-token", "expiresAt": 1798761600000}}`
 	if err := os.WriteFile(credsPath, []byte(credsJSON), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -276,6 +278,99 @@ func TestClaudeProvider_FetchUsage_APIError(t *testing.T) {
 	}
 }
 
+func TestClaudeProvider_FetchUsage_RefreshesTokenOn401(t *testing.T) {
+	refreshCalls := 0
+	refreshServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		refreshCalls++
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+
+		body, _ := io.ReadAll(r.Body)
+		var payload map[string]string
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Fatalf("failed to parse refresh payload: %v", err)
+		}
+		if payload["grant_type"] != "refresh_token" {
+			t.Errorf("expected grant_type refresh_token, got %q", payload["grant_type"])
+		}
+		if payload["refresh_token"] != "refresh-token" {
+			t.Errorf("expected refresh_token refresh-token, got %q", payload["refresh_token"])
+		}
+		if payload["client_id"] != claudeClientID {
+			t.Errorf("expected client_id %q, got %q", claudeClientID, payload["client_id"])
+		}
+		if payload["scope"] != "user:profile user:inference user:sessions:claude_code" {
+			t.Errorf("unexpected scope: %q", payload["scope"])
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"new-token","refresh_token":"new-refresh","expires_in":3600,"scope":"user:profile user:inference user:sessions:claude_code"}`))
+	}))
+	defer refreshServer.Close()
+
+	usageCalls := 0
+	usageServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		usageCalls++
+		if r.Header.Get("Authorization") != "Bearer new-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"error": "unauthorized"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"five_hour": {
+				"utilization": 10.0,
+				"resets_at": "2026-01-02T19:59:59+00:00"
+			},
+			"seven_day": {
+				"utilization": 20.0,
+				"resets_at": "2026-01-08T06:59:59+00:00"
+			}
+		}`))
+	}))
+	defer usageServer.Close()
+
+	tempDir := t.TempDir()
+	claudeDir := filepath.Join(tempDir, ".claude")
+	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	credsPath := filepath.Join(claudeDir, ".credentials.json")
+	credsJSON := `{"claudeAiOauth": {"accessToken": "old-token", "refreshToken": "refresh-token", "expiresAt": 1767396165210, "scopes": ["user:profile","user:inference","user:sessions:claude_code"]}}`
+	if err := os.WriteFile(credsPath, []byte(credsJSON), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &ClaudeProvider{
+		homeDir:  tempDir,
+		baseURL:  usageServer.URL,
+		tokenURL: refreshServer.URL,
+		client:   &http.Client{Timeout: 5 * time.Second},
+	}
+
+	rows, err := p.FetchUsage(context.Background())
+	if err != nil {
+		t.Fatalf("FetchUsage() error = %v", err)
+	}
+
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(rows))
+	}
+	if refreshCalls != 1 {
+		t.Errorf("expected 1 refresh call, got %d", refreshCalls)
+	}
+	if usageCalls != 2 {
+		t.Errorf("expected 2 usage calls (401 + retry), got %d", usageCalls)
+	}
+	for _, row := range rows {
+		if row.IsWarning {
+			t.Errorf("unexpected warning row: %s", row.WarningMsg)
+		}
+	}
+}
+
 func TestClaudeProvider_FetchUsage_APIError500(t *testing.T) {
 	// Create mock server that returns 500
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -292,7 +387,7 @@ func TestClaudeProvider_FetchUsage_APIError500(t *testing.T) {
 	}
 
 	credsPath := filepath.Join(claudeDir, ".credentials.json")
-	credsJSON := `{"claudeAiOauth": {"accessToken": "test-token", "expiresAt": 1767396165210}}`
+	credsJSON := `{"claudeAiOauth": {"accessToken": "test-token", "expiresAt": 1798761600000}}`
 	if err := os.WriteFile(credsPath, []byte(credsJSON), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -347,7 +442,7 @@ func TestClaudeProvider_FetchUsage_MalformedTimestamp(t *testing.T) {
 	}
 
 	credsPath := filepath.Join(claudeDir, ".credentials.json")
-	credsJSON := `{"claudeAiOauth": {"accessToken": "test-token", "expiresAt": 1767396165210}}`
+	credsJSON := `{"claudeAiOauth": {"accessToken": "test-token", "expiresAt": 1798761600000}}`
 	if err := os.WriteFile(credsPath, []byte(credsJSON), 0600); err != nil {
 		t.Fatal(err)
 	}
