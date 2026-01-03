@@ -3,8 +3,10 @@ package providers
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -569,6 +571,107 @@ func TestGeminiProvider_FetchUsage_APIError(t *testing.T) {
 	}
 }
 
+func TestGeminiProvider_RefreshesTokenOn401(t *testing.T) {
+	refreshCalls := 0
+	refreshServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		refreshCalls++
+		if r.Method != http.MethodPost {
+			t.Errorf("Expected POST, got %s", r.Method)
+		}
+		if r.URL.Path != "/token" {
+			t.Errorf("Expected path /token, got %s", r.URL.Path)
+		}
+		body, _ := io.ReadAll(r.Body)
+		values, _ := url.ParseQuery(string(body))
+		if values.Get("grant_type") != "refresh_token" {
+			t.Errorf("Expected grant_type refresh_token, got %s", values.Get("grant_type"))
+		}
+		if values.Get("refresh_token") != "refresh-token" {
+			t.Errorf("Expected refresh_token refresh-token, got %s", values.Get("refresh_token"))
+		}
+		if values.Get("client_id") != "client-id" {
+			t.Errorf("Expected client_id client-id, got %s", values.Get("client_id"))
+		}
+		if values.Get("client_secret") != "client-secret" {
+			t.Errorf("Expected client_secret client-secret, got %s", values.Get("client_secret"))
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"access_token":"new-token","expires_in":3600,"token_type":"Bearer"}`))
+	}))
+	defer refreshServer.Close()
+
+	quotaCalls := 0
+	quotaServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		quotaCalls++
+		if r.URL.Path != geminiEndpoint {
+			t.Errorf("Expected path %s, got %s", geminiEndpoint, r.URL.Path)
+		}
+		if r.Header.Get("Authorization") != "Bearer new-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		resp := geminiQuotaResponse{
+			Buckets: []geminiQuotaBucket{
+				{
+					ModelID:           "gemini-2.5-pro",
+					TokenType:         "REQUESTS",
+					RemainingFraction: 0.5,
+					ResetTime:         "2025-10-22T16:01:15Z",
+				},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer quotaServer.Close()
+
+	tmpDir := t.TempDir()
+	credDir := filepath.Join(tmpDir, ".cli-proxy-api")
+	if err := os.MkdirAll(credDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	cred := map[string]any{
+		"token": map[string]string{
+			"access_token":  "expired-token",
+			"refresh_token": "refresh-token",
+			"client_id":     "client-id",
+			"client_secret": "client-secret",
+			"token_uri":     refreshServer.URL + "/token",
+		},
+		"project_id": "proj",
+	}
+	data, _ := json.Marshal(cred)
+	if err := os.WriteFile(filepath.Join(credDir, "user@test.com-proj.json"), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	provider := &GeminiProvider{
+		homeDir: tmpDir,
+		baseURL: quotaServer.URL,
+		client:  &http.Client{Timeout: 5 * time.Second},
+	}
+
+	rows, err := provider.FetchUsage(context.Background())
+	if err != nil {
+		t.Fatalf("FetchUsage() error = %v", err)
+	}
+
+	if len(rows) != 1 {
+		t.Fatalf("Expected 1 row, got %d", len(rows))
+	}
+	if rows[0].IsWarning {
+		t.Errorf("Expected data row, got warning: %s", rows[0].WarningMsg)
+	}
+	if refreshCalls != 1 {
+		t.Errorf("Expected 1 refresh call, got %d", refreshCalls)
+	}
+	if quotaCalls != 2 {
+		t.Errorf("Expected 2 quota calls (401 + retry), got %d", quotaCalls)
+	}
+}
+
 func TestGeminiProvider_FilePatternFiltering(t *testing.T) {
 	tmpDir := t.TempDir()
 	credDir := filepath.Join(tmpDir, ".cli-proxy-api")
@@ -596,6 +699,9 @@ func TestGeminiProvider_FilePatternFiltering(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(credDir, "codex-user@test.com.json"), []byte(`{
 		"access_token": "token"
 	}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(credDir, "claude-user@test.com.json"), validData, 0600); err != nil {
 		t.Fatal(err)
 	}
 
