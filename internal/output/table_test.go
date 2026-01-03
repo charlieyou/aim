@@ -294,3 +294,75 @@ func TestRenderTable_FullUsage(t *testing.T) {
 		t.Error("Output missing '100%' usage")
 	}
 }
+
+func TestTruncateRunes(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		maxLen int
+		want   string
+	}{
+		{
+			name:   "string shorter than maxLen",
+			input:  "hello",
+			maxLen: 10,
+			want:   "hello",
+		},
+		{
+			name:   "string equal to maxLen",
+			input:  "hello",
+			maxLen: 5,
+			want:   "hello",
+		},
+		{
+			name:   "string longer than maxLen includes ellipsis in limit",
+			input:  "hello world this is a long string",
+			maxLen: 10,
+			want:   "hello w...",
+		},
+		{
+			name:   "truncated result length equals maxLen",
+			input:  "abcdefghijklmnopqrstuvwxyz",
+			maxLen: 10,
+			want:   "abcdefg...",
+		},
+		{
+			name:   "maxLen of 3 returns first 3 chars without ellipsis",
+			input:  "hello",
+			maxLen: 3,
+			want:   "hel",
+		},
+		{
+			name:   "maxLen of 4 returns 1 char plus ellipsis",
+			input:  "hello",
+			maxLen: 4,
+			want:   "h...",
+		},
+		{
+			name:   "unicode runes are counted correctly",
+			input:  "日本語テスト文字列です",
+			maxLen: 7,
+			want:   "日本語テ...",
+		},
+		{
+			name:   "maxWarningLen truncation stays within limit",
+			input:  strings.Repeat("a", 150),
+			maxLen: 120,
+			want:   strings.Repeat("a", 117) + "...",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := truncateRunes(tt.input, tt.maxLen)
+			if got != tt.want {
+				t.Errorf("truncateRunes(%q, %d) = %q, want %q", tt.input, tt.maxLen, got, tt.want)
+			}
+			// Verify result length never exceeds maxLen
+			if len([]rune(got)) > tt.maxLen {
+				t.Errorf("truncateRunes(%q, %d) result length %d exceeds maxLen %d",
+					tt.input, tt.maxLen, len([]rune(got)), tt.maxLen)
+			}
+		})
+	}
+}

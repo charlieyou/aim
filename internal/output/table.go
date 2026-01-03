@@ -55,7 +55,11 @@ func truncateRunes(s string, maxLen int) string {
 	if len(runes) <= maxLen {
 		return s
 	}
-	return string(runes[:maxLen]) + "..."
+	// Truncate to maxLen-3 to leave room for "..." ellipsis
+	if maxLen <= 3 {
+		return string(runes[:maxLen])
+	}
+	return string(runes[:maxLen-3]) + "..."
 }
 
 // RenderTable renders usage rows as an ASCII table.
