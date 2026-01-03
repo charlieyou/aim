@@ -59,6 +59,7 @@ type claudeAuth struct {
 	SourceName     string
 	CredentialPath string
 	LoadErr        string
+	IsNative       bool
 }
 
 // claudeUsageResponse represents the API response
@@ -140,6 +141,11 @@ func (c *ClaudeProvider) FetchUsage(ctx context.Context) ([]UsageRow, error) {
 
 // loadCredentials loads the access token from the credentials file
 func (c *ClaudeProvider) loadCredentials() ([]claudeAuth, error) {
+	source := DetectCredentialSource(c.homeDir)
+	if source == SourceNative {
+		return c.loadNativeCredentials()
+	}
+
 	pattern := filepath.Join(c.homeDir, ".cli-proxy-api", "claude-*.json")
 
 	matches, err := filepath.Glob(pattern)
@@ -206,6 +212,66 @@ func (c *ClaudeProvider) loadCredentialFile(credsPath string) (claudeAuth, error
 	}, nil
 }
 
+// nativeCredentials represents the ~/.claude/.credentials.json structure.
+type nativeCredentials struct {
+	ClaudeAIOAuth *nativeOAuth `json:"claudeAiOauth"`
+}
+
+type nativeOAuth struct {
+	AccessToken  string `json:"accessToken"`
+	RefreshToken string `json:"refreshToken"`
+	ExpiresAt    int64  `json:"expiresAt"`
+}
+
+// loadNativeCredentials loads credentials from ~/.claude/.credentials.json.
+func (c *ClaudeProvider) loadNativeCredentials() ([]claudeAuth, error) {
+	credsPath := filepath.Join(c.homeDir, ".claude", ".credentials.json")
+
+	data, err := os.ReadFile(credsPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil // silent skip if file missing
+		}
+		return nil, nil // silent skip if unreadable
+	}
+
+	var creds nativeCredentials
+	if err := json.Unmarshal(data, &creds); err != nil {
+		return []claudeAuth{{
+			Email:          "Claude (native)",
+			SourceName:     "native",
+			CredentialPath: credsPath,
+			IsNative:       true,
+			LoadErr:        fmt.Sprintf("failed to parse credentials: %v", err),
+		}}, nil
+	}
+
+	if creds.ClaudeAIOAuth == nil || creds.ClaudeAIOAuth.AccessToken == "" {
+		return []claudeAuth{{
+			Email:          "Claude (native)",
+			SourceName:     "native",
+			CredentialPath: credsPath,
+			IsNative:       true,
+			LoadErr:        "no access token found in credentials",
+		}}, nil
+	}
+
+	auth := claudeAuth{
+		AccessToken:    creds.ClaudeAIOAuth.AccessToken,
+		RefreshToken:   creds.ClaudeAIOAuth.RefreshToken,
+		Email:          "Claude (native)",
+		SourceName:     "native",
+		CredentialPath: credsPath,
+		IsNative:       true,
+	}
+
+	if creds.ClaudeAIOAuth.ExpiresAt > 0 {
+		auth.ExpiresAt = time.UnixMilli(creds.ClaudeAIOAuth.ExpiresAt)
+	}
+
+	return []claudeAuth{auth}, nil
+}
+
 func (c *ClaudeProvider) fetchAccountUsage(ctx context.Context, account claudeAuth) ([]UsageRow, error) {
 	if account.AccessToken == "" {
 		if account.LoadErr != "" {
@@ -242,6 +308,9 @@ func (c *ClaudeProvider) fetchAccountUsage(ctx context.Context, account claudeAu
 }
 
 func (c *ClaudeProvider) refreshAccessToken(ctx context.Context, creds claudeAuth) (string, error) {
+	if creds.IsNative {
+		return "", fmt.Errorf("token expired. Re-authenticate with claude to refresh")
+	}
 	if creds.RefreshToken == "" {
 		return "", fmt.Errorf("refresh token not available")
 	}

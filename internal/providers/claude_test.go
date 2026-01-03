@@ -626,3 +626,263 @@ func TestNewClaudeProvider(t *testing.T) {
 		t.Error("homeDir is empty")
 	}
 }
+
+func TestClaude_LoadNativeCredentials_ValidFile(t *testing.T) {
+	tempDir := t.TempDir()
+	claudeDir := filepath.Join(tempDir, ".claude")
+	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	credsPath := filepath.Join(claudeDir, ".credentials.json")
+	credsJSON := `{
+		"claudeAiOauth": {
+			"accessToken": "sk-ant-oat01-test",
+			"refreshToken": "sk-ant-ort01-test",
+			"expiresAt": 1767479369930
+		}
+	}`
+	if err := os.WriteFile(credsPath, []byte(credsJSON), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &ClaudeProvider{homeDir: tempDir}
+	accounts, err := p.loadNativeCredentials()
+	if err != nil {
+		t.Fatalf("loadNativeCredentials() error = %v", err)
+	}
+
+	if len(accounts) != 1 {
+		t.Fatalf("expected 1 account, got %d", len(accounts))
+	}
+
+	acc := accounts[0]
+	if acc.AccessToken != "sk-ant-oat01-test" {
+		t.Errorf("AccessToken = %q, want %q", acc.AccessToken, "sk-ant-oat01-test")
+	}
+	if acc.RefreshToken != "sk-ant-ort01-test" {
+		t.Errorf("RefreshToken = %q, want %q", acc.RefreshToken, "sk-ant-ort01-test")
+	}
+	if acc.Email != "Claude (native)" {
+		t.Errorf("Email = %q, want %q", acc.Email, "Claude (native)")
+	}
+	if !acc.IsNative {
+		t.Error("IsNative = false, want true")
+	}
+	if acc.ExpiresAt.IsZero() {
+		t.Error("ExpiresAt is zero, expected non-zero")
+	}
+	expectedExpiry := time.UnixMilli(1767479369930)
+	if !acc.ExpiresAt.Equal(expectedExpiry) {
+		t.Errorf("ExpiresAt = %v, want %v", acc.ExpiresAt, expectedExpiry)
+	}
+}
+
+func TestClaude_LoadNativeCredentials_MissingFile(t *testing.T) {
+	tempDir := t.TempDir()
+
+	p := &ClaudeProvider{homeDir: tempDir}
+	accounts, err := p.loadNativeCredentials()
+	if err != nil {
+		t.Fatalf("loadNativeCredentials() error = %v", err)
+	}
+
+	if accounts != nil {
+		t.Errorf("expected nil accounts for missing file, got %v", accounts)
+	}
+}
+
+func TestClaude_LoadNativeCredentials_InvalidJSON(t *testing.T) {
+	tempDir := t.TempDir()
+	claudeDir := filepath.Join(tempDir, ".claude")
+	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	credsPath := filepath.Join(claudeDir, ".credentials.json")
+	if err := os.WriteFile(credsPath, []byte("not valid json"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &ClaudeProvider{homeDir: tempDir}
+	accounts, err := p.loadNativeCredentials()
+	if err != nil {
+		t.Fatalf("loadNativeCredentials() error = %v", err)
+	}
+
+	if len(accounts) != 1 {
+		t.Fatalf("expected 1 warning account, got %d", len(accounts))
+	}
+
+	acc := accounts[0]
+	if acc.LoadErr == "" {
+		t.Error("LoadErr is empty, expected parse error")
+	}
+	if !acc.IsNative {
+		t.Error("IsNative = false, want true")
+	}
+	if acc.Email != "Claude (native)" {
+		t.Errorf("Email = %q, want %q", acc.Email, "Claude (native)")
+	}
+}
+
+func TestClaude_LoadCredentials_UsesGlobalSource(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Test SourceNative: no proxy dir, has native credentials
+	claudeDir := filepath.Join(tempDir, ".claude")
+	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	credsJSON := `{"claudeAiOauth": {"accessToken": "native-token"}}`
+	if err := os.WriteFile(filepath.Join(claudeDir, ".credentials.json"), []byte(credsJSON), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &ClaudeProvider{homeDir: tempDir}
+	accounts, err := p.loadCredentials()
+	if err != nil {
+		t.Fatalf("loadCredentials() error = %v", err)
+	}
+
+	if len(accounts) != 1 {
+		t.Fatalf("expected 1 account, got %d", len(accounts))
+	}
+	if accounts[0].AccessToken != "native-token" {
+		t.Errorf("AccessToken = %q, want %q", accounts[0].AccessToken, "native-token")
+	}
+	if !accounts[0].IsNative {
+		t.Error("expected native credentials when SourceNative")
+	}
+}
+
+func TestClaude_LoadCredentials_UsesProxySource(t *testing.T) {
+	tempDir := t.TempDir()
+
+	// Create proxy credentials
+	proxyDir := filepath.Join(tempDir, ".cli-proxy-api")
+	if err := os.MkdirAll(proxyDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	proxyJSON := `{"access_token": "proxy-token", "type": "claude"}`
+	if err := os.WriteFile(filepath.Join(proxyDir, "claude-user@example.com.json"), []byte(proxyJSON), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Also create native credentials (should be ignored when proxy exists)
+	claudeDir := filepath.Join(tempDir, ".claude")
+	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	nativeJSON := `{"claudeAiOauth": {"accessToken": "native-token"}}`
+	if err := os.WriteFile(filepath.Join(claudeDir, ".credentials.json"), []byte(nativeJSON), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &ClaudeProvider{homeDir: tempDir}
+	accounts, err := p.loadCredentials()
+	if err != nil {
+		t.Fatalf("loadCredentials() error = %v", err)
+	}
+
+	if len(accounts) != 1 {
+		t.Fatalf("expected 1 account, got %d", len(accounts))
+	}
+	if accounts[0].AccessToken != "proxy-token" {
+		t.Errorf("AccessToken = %q, want %q", accounts[0].AccessToken, "proxy-token")
+	}
+	if accounts[0].IsNative {
+		t.Error("expected proxy credentials when SourceProxy")
+	}
+}
+
+func TestClaude_RefreshAccessToken_NativeSkip(t *testing.T) {
+	p := &ClaudeProvider{
+		client: &http.Client{Timeout: 5 * time.Second},
+	}
+
+	creds := claudeAuth{
+		IsNative:     true,
+		AccessToken:  "expired-token",
+		RefreshToken: "refresh-token",
+	}
+
+	_, err := p.refreshAccessToken(context.Background(), creds)
+	if err == nil {
+		t.Fatal("expected error for native credentials refresh")
+	}
+
+	expectedMsg := "token expired. Re-authenticate with claude to refresh"
+	if err.Error() != expectedMsg {
+		t.Errorf("error = %q, want %q", err.Error(), expectedMsg)
+	}
+}
+
+func TestClaude_LoadNativeCredentials_MissingAccessToken(t *testing.T) {
+	tempDir := t.TempDir()
+	claudeDir := filepath.Join(tempDir, ".claude")
+	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Valid JSON but no accessToken
+	credsPath := filepath.Join(claudeDir, ".credentials.json")
+	credsJSON := `{"claudeAiOauth": {"refreshToken": "sk-ant-ort01-test"}}`
+	if err := os.WriteFile(credsPath, []byte(credsJSON), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &ClaudeProvider{homeDir: tempDir}
+	accounts, err := p.loadNativeCredentials()
+	if err != nil {
+		t.Fatalf("loadNativeCredentials() error = %v", err)
+	}
+
+	if len(accounts) != 1 {
+		t.Fatalf("expected 1 warning account, got %d", len(accounts))
+	}
+
+	acc := accounts[0]
+	if acc.LoadErr == "" {
+		t.Error("LoadErr is empty, expected 'no access token' error")
+	}
+	if acc.LoadErr != "no access token found in credentials" {
+		t.Errorf("LoadErr = %q, want 'no access token found in credentials'", acc.LoadErr)
+	}
+}
+
+func TestClaude_LoadNativeCredentials_MissingExpiresAt(t *testing.T) {
+	tempDir := t.TempDir()
+	claudeDir := filepath.Join(tempDir, ".claude")
+	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Valid JSON with accessToken but no expiresAt
+	credsPath := filepath.Join(claudeDir, ".credentials.json")
+	credsJSON := `{"claudeAiOauth": {"accessToken": "sk-ant-oat01-test"}}`
+	if err := os.WriteFile(credsPath, []byte(credsJSON), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &ClaudeProvider{homeDir: tempDir}
+	accounts, err := p.loadNativeCredentials()
+	if err != nil {
+		t.Fatalf("loadNativeCredentials() error = %v", err)
+	}
+
+	if len(accounts) != 1 {
+		t.Fatalf("expected 1 account, got %d", len(accounts))
+	}
+
+	acc := accounts[0]
+	if acc.AccessToken != "sk-ant-oat01-test" {
+		t.Errorf("AccessToken = %q, want %q", acc.AccessToken, "sk-ant-oat01-test")
+	}
+	if acc.LoadErr != "" {
+		t.Errorf("LoadErr = %q, want empty (token valid without expiry)", acc.LoadErr)
+	}
+	if !acc.ExpiresAt.IsZero() {
+		t.Errorf("ExpiresAt = %v, want zero (missing expiresAt)", acc.ExpiresAt)
+	}
+}
