@@ -72,8 +72,9 @@ func main() {
 
 // sortRows sorts usage rows by:
 // 1. Provider order: Claude, Codex, Gemini (based on prefix)
-// 2. Alphabetical by Label within each provider
-// 3. Warnings last within each group
+// 2. Warnings last within each provider group
+// 3. Full provider name (for multi-account providers like Codex)
+// 4. Alphabetical by Label within each provider
 func sortRows(rows []providers.UsageRow) {
 	providerOrder := map[string]int{
 		"Claude": 0,
@@ -81,10 +82,14 @@ func sortRows(rows []providers.UsageRow) {
 		"Gemini": 2,
 	}
 
+	// providerPrefixes defines the canonical prefixes in deterministic order.
+	// Longer prefixes are checked first to handle potential overlaps correctly.
+	providerPrefixes := []string{"Claude", "Codex", "Gemini"}
+
 	// getProviderPrefix extracts the base provider name from Provider field
 	// e.g., "Codex (user@example.com)" -> "Codex"
 	getProviderPrefix := func(provider string) string {
-		for prefix := range providerOrder {
+		for _, prefix := range providerPrefixes {
 			if len(provider) >= len(prefix) && provider[:len(prefix)] == prefix {
 				return prefix
 			}
@@ -113,14 +118,14 @@ func sortRows(rows []providers.UsageRow) {
 			return orderI < orderJ
 		}
 
-		// Secondary: Full provider name (for multi-account providers like Codex)
-		if rows[i].Provider != rows[j].Provider {
-			return rows[i].Provider < rows[j].Provider
-		}
-
-		// Tertiary: Warnings last within each provider
+		// Secondary: Warnings last within each provider group
 		if rows[i].IsWarning != rows[j].IsWarning {
 			return !rows[i].IsWarning // non-warnings come first
+		}
+
+		// Tertiary: Full provider name (for multi-account providers like Codex)
+		if rows[i].Provider != rows[j].Provider {
+			return rows[i].Provider < rows[j].Provider
 		}
 
 		// Quaternary: Alphabetical by Label
