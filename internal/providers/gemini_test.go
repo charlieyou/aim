@@ -72,7 +72,7 @@ func TestGeminiProvider_FetchUsage_SingleAccount(t *testing.T) {
 		"project_id": "gen-lang-client-123",
 	}
 	credData, _ := json.Marshal(cred)
-	credFile := filepath.Join(credDir, "user@example.com-gen-lang-client-123.json")
+	credFile := filepath.Join(credDir, "gemini-user@example.com-gen-lang-client-123.json")
 	if err := os.WriteFile(credFile, credData, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestGeminiProvider_FetchUsage_FractionalSeconds(t *testing.T) {
 		"project_id": "proj",
 	}
 	data, _ := json.Marshal(cred)
-	if err := os.WriteFile(filepath.Join(credDir, "user@test.com-proj.json"), data, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(credDir, "gemini-user@test.com-proj.json"), data, 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -215,7 +215,7 @@ func TestGeminiProvider_FetchUsage_MultipleBuckets(t *testing.T) {
 		"project_id": "proj-1",
 	}
 	credData, _ := json.Marshal(cred)
-	if err := os.WriteFile(filepath.Join(credDir, "alice@test.com-proj-1.json"), credData, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(credDir, "gemini-alice@test.com-proj-1.json"), credData, 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -288,10 +288,10 @@ func TestGeminiProvider_FetchUsage_MultipleAccounts(t *testing.T) {
 	}
 	data1, _ := json.Marshal(cred1)
 	data2, _ := json.Marshal(cred2)
-	if err := os.WriteFile(filepath.Join(credDir, "alice@test.com-proj-1.json"), data1, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(credDir, "gemini-alice@test.com-proj-1.json"), data1, 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(credDir, "bob@test.com-proj-2.json"), data2, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(credDir, "gemini-bob@test.com-proj-2.json"), data2, 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -353,7 +353,7 @@ func TestGeminiProvider_FetchUsage_NoCreds(t *testing.T) {
 	if row.Provider != "Gemini" {
 		t.Errorf("Provider = %q, want %q", row.Provider, "Gemini")
 	}
-	if row.WarningMsg != "No valid credential files found in ~/.cli-proxy-api/" {
+	if row.WarningMsg != "No valid credential files found in ~/.cli-proxy-api/gemini-*.json" {
 		t.Errorf("WarningMsg = %q", row.WarningMsg)
 	}
 }
@@ -372,7 +372,7 @@ func TestGeminiProvider_FetchUsage_MissingProjectID(t *testing.T) {
 		// Missing project_id
 	}
 	data, _ := json.Marshal(cred)
-	if err := os.WriteFile(filepath.Join(credDir, "user@example.com-proj.json"), data, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(credDir, "gemini-user@example.com-proj.json"), data, 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -452,7 +452,7 @@ func TestGeminiProvider_RemainingFractionConversion(t *testing.T) {
 				"project_id": "proj",
 			}
 			data, _ := json.Marshal(cred)
-			if err := os.WriteFile(filepath.Join(credDir, "user@test.com-proj.json"), data, 0600); err != nil {
+			if err := os.WriteFile(filepath.Join(credDir, "gemini-user@test.com-proj.json"), data, 0600); err != nil {
 				t.Fatal(err)
 			}
 
@@ -499,7 +499,7 @@ func TestGeminiProvider_EmptyBuckets(t *testing.T) {
 		"project_id": "proj",
 	}
 	data, _ := json.Marshal(cred)
-	if err := os.WriteFile(filepath.Join(credDir, "user@test.com-proj.json"), data, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(credDir, "gemini-user@test.com-proj.json"), data, 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -544,7 +544,7 @@ func TestGeminiProvider_FetchUsage_APIError(t *testing.T) {
 		"project_id": "proj",
 	}
 	data, _ := json.Marshal(cred)
-	if err := os.WriteFile(filepath.Join(credDir, "user@test.com-proj.json"), data, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(credDir, "gemini-user@test.com-proj.json"), data, 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -643,7 +643,7 @@ func TestGeminiProvider_RefreshesTokenOn401(t *testing.T) {
 		"project_id": "proj",
 	}
 	data, _ := json.Marshal(cred)
-	credPath := filepath.Join(credDir, "user@test.com-proj.json")
+	credPath := filepath.Join(credDir, "gemini-user@test.com-proj.json")
 	if err := os.WriteFile(credPath, data, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -695,13 +695,13 @@ func TestGeminiProvider_FilePatternFiltering(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Valid file (matches *-*.json pattern)
+	// Valid file (matches gemini-*.json pattern)
 	validCred := map[string]any{
 		"token":      map[string]string{"access_token": "token"},
 		"project_id": "proj",
 	}
 	validData, _ := json.Marshal(validCred)
-	if err := os.WriteFile(filepath.Join(credDir, "user@test.com-proj.json"), validData, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(credDir, "gemini-user@test.com-proj.json"), validData, 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -750,9 +750,9 @@ func TestGeminiProvider_FilePatternFiltering(t *testing.T) {
 
 	// Should have 1 data row from valid file only.
 	// Invalid files are silently skipped:
-	// - noHyphen.json: no hyphen in name (doesn't match *-*.json pattern)
+	// - noHyphen.json: doesn't match gemini-*.json
 	// - something.txt: doesn't end with .json
-	// - codex-*.json: explicitly excluded as it's from another provider
+	// - codex-*.json: doesn't match gemini-*.json
 	if len(rows) != 1 {
 		t.Fatalf("Expected 1 row, got %d", len(rows))
 	}
@@ -771,9 +771,9 @@ func TestGeminiProvider_EmailExtraction(t *testing.T) {
 		projectID string
 		wantEmail string
 	}{
-		{"user@example.com-gen-lang-client-0353902167.json", "gen-lang-client-0353902167", "user@example.com"},
-		{"alice.bob@test.org-proj-123.json", "proj-123", "alice.bob@test.org"},
-		{"name-with-dash@domain.com-myproject.json", "myproject", "name-with-dash@domain.com"},
+		{"gemini-user@example.com-gen-lang-client-0353902167.json", "gen-lang-client-0353902167", "user@example.com"},
+		{"gemini-alice.bob@test.org-proj-123.json", "proj-123", "alice.bob@test.org"},
+		{"gemini-name-with-dash@domain.com-myproject.json", "myproject", "name-with-dash@domain.com"},
 	}
 
 	for _, tt := range tests {

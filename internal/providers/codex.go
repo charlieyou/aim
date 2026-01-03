@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -138,8 +139,9 @@ func (c *CodexProvider) loadCredentials() ([]CodexAccount, error) {
 		return nil, fmt.Errorf("failed to glob credentials: %w", err)
 	}
 
-	accountsByKey := make(map[string]CodexAccount)
-	var ordered []string
+	sort.Strings(matches)
+
+	accounts := make([]CodexAccount, 0, len(matches))
 	for _, path := range matches {
 		account, err := c.loadCredentialFile(path)
 		if err != nil {
@@ -152,19 +154,7 @@ func (c *CodexProvider) loadCredentials() ([]CodexAccount, error) {
 				LoadErr:    err.Error(),
 			}
 		}
-
-		key := codexAccountKey(account, filepath.Base(path))
-		if existing, ok := accountsByKey[key]; ok {
-			accountsByKey[key] = preferCodexAccount(existing, account)
-			continue
-		}
-		accountsByKey[key] = account
-		ordered = append(ordered, key)
-	}
-
-	accounts := make([]CodexAccount, 0, len(ordered))
-	for _, key := range ordered {
-		accounts = append(accounts, accountsByKey[key])
+		accounts = append(accounts, account)
 	}
 
 	applyCodexDisplayNames(accounts)

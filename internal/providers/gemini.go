@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -41,7 +42,7 @@ type GeminiProvider struct {
 	client  *http.Client
 }
 
-// geminiCredFile represents the structure of ~/.cli-proxy-api/*-*.json files
+// geminiCredFile represents the structure of ~/.cli-proxy-api/gemini-*.json files
 type geminiCredFile struct {
 	Token struct {
 		AccessToken  string `json:"access_token"`
@@ -117,7 +118,7 @@ func (g *GeminiProvider) FetchUsage(ctx context.Context) ([]UsageRow, error) {
 		rows = append(rows, UsageRow{
 			Provider:   "Gemini",
 			IsWarning:  true,
-			WarningMsg: "No valid credential files found in ~/.cli-proxy-api/",
+			WarningMsg: "No valid credential files found in ~/.cli-proxy-api/gemini-*.json",
 		})
 		return rows, nil
 	}
@@ -139,45 +140,26 @@ func (g *GeminiProvider) FetchUsage(ctx context.Context) ([]UsageRow, error) {
 	return rows, nil
 }
 
-// loadCredentials discovers and loads credentials from ~/.cli-proxy-api/*-*.json files
+// loadCredentials discovers and loads credentials from ~/.cli-proxy-api/gemini-*.json files
 func (g *GeminiProvider) loadCredentials() ([]GeminiAccount, []string) {
 	var accounts []GeminiAccount
 	var warnings []string
 
-	credDir := filepath.Join(g.homeDir, ".cli-proxy-api")
-
-	// Check if directory exists
-	if _, err := os.Stat(credDir); os.IsNotExist(err) {
-		return accounts, warnings
-	}
-
-	// Find all files matching *-*.json pattern
-	entries, err := os.ReadDir(credDir)
+	pattern := filepath.Join(g.homeDir, ".cli-proxy-api", "gemini-*.json")
+	matches, err := filepath.Glob(pattern)
 	if err != nil {
-		warnings = append(warnings, fmt.Sprintf("Failed to read ~/.cli-proxy-api/: %v", err))
+		warnings = append(warnings, fmt.Sprintf("Failed to glob %s: %v", pattern, err))
 		return accounts, warnings
 	}
 
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
+	sort.Strings(matches)
 
-		name := entry.Name()
-		// Must end with .json and contain a hyphen (for *-*.json pattern)
-		if !strings.HasSuffix(name, ".json") {
-			continue
-		}
-
-		// Skip files from other providers (e.g., codex-*, claude-*)
-		if strings.HasPrefix(name, "codex-") || strings.HasPrefix(name, "claude-") {
-			continue
-		}
-
+	for _, filePath := range matches {
+		name := filepath.Base(filePath)
 		baseName := strings.TrimSuffix(name, ".json")
+		baseName = strings.TrimPrefix(baseName, "gemini-")
 
 		// Read and parse the file
-		filePath := filepath.Join(credDir, name)
 		account, err := g.parseCredFile(filePath, baseName)
 		if err != nil {
 			if errors.Is(err, errNotGeminiCred) {
