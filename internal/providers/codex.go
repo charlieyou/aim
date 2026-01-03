@@ -24,11 +24,14 @@ const (
 // CodexAccount holds credentials for a single Codex account
 type CodexAccount struct {
 	Email        string
+	AccountID    string
 	Token        string
 	IDToken      string
 	RefreshToken string
 	ClientID     string
 	Scopes       []string
+	LastRefresh  time.Time
+	ExpiresAt    time.Time
 	LoadErr      string // Error message from loading credentials, if any
 }
 
@@ -37,6 +40,10 @@ type codexCredentials struct {
 	AccessToken  string `json:"access_token"`
 	IDToken      string `json:"id_token"`
 	RefreshToken string `json:"refresh_token"`
+	Email        string `json:"email"`
+	AccountID    string `json:"account_id"`
+	LastRefresh  string `json:"last_refresh"`
+	Expired      string `json:"expired"`
 }
 
 // codexAPIResponse represents the API response structure
@@ -124,20 +131,35 @@ func (c *CodexProvider) loadCredentials() ([]CodexAccount, error) {
 		return nil, fmt.Errorf("failed to glob credentials: %w", err)
 	}
 
-	var accounts []CodexAccount
+	accountsByEmail := make(map[string]CodexAccount)
+	var ordered []string
 	for _, path := range matches {
 		account, err := c.loadCredentialFile(path)
 		if err != nil {
 			// Return a partial account with email and error so we can report specific details
 			email := extractEmailFromFilename(filepath.Base(path))
-			accounts = append(accounts, CodexAccount{
+			account = CodexAccount{
 				Email:   email,
 				Token:   "", // Empty token signals a load error
 				LoadErr: err.Error(),
-			})
+			}
+		}
+
+		key := strings.ToLower(account.Email)
+		if key == "" {
+			key = strings.ToLower(filepath.Base(path))
+		}
+		if existing, ok := accountsByEmail[key]; ok {
+			accountsByEmail[key] = preferCodexAccount(existing, account)
 			continue
 		}
-		accounts = append(accounts, account)
+		accountsByEmail[key] = account
+		ordered = append(ordered, key)
+	}
+
+	accounts := make([]CodexAccount, 0, len(ordered))
+	for _, key := range ordered {
+		accounts = append(accounts, accountsByEmail[key])
 	}
 
 	return accounts, nil
@@ -146,7 +168,6 @@ func (c *CodexProvider) loadCredentials() ([]CodexAccount, error) {
 // loadCredentialFile loads a single credential file
 func (c *CodexProvider) loadCredentialFile(path string) (CodexAccount, error) {
 	filename := filepath.Base(path)
-	email := extractEmailFromFilename(filename)
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -162,15 +183,25 @@ func (c *CodexProvider) loadCredentialFile(path string) (CodexAccount, error) {
 		return CodexAccount{}, fmt.Errorf("missing access_token")
 	}
 
+	email := creds.Email
+	if email == "" {
+		email = extractEmailFromFilename(filename)
+	}
+	lastRefresh, _ := parseCodexTime(creds.LastRefresh)
+	expiresAt, _ := parseCodexTime(creds.Expired)
+
 	clientID, scopes := extractCodexAuthDetails(creds.AccessToken, creds.IDToken)
 
 	return CodexAccount{
 		Email:        email,
+		AccountID:    creds.AccountID,
 		Token:        creds.AccessToken,
 		IDToken:      creds.IDToken,
 		RefreshToken: creds.RefreshToken,
 		ClientID:     clientID,
 		Scopes:       scopes,
+		LastRefresh:  lastRefresh,
+		ExpiresAt:    expiresAt,
 	}, nil
 }
 
@@ -180,6 +211,54 @@ func extractEmailFromFilename(filename string) string {
 	name := strings.TrimPrefix(filename, "codex-")
 	name = strings.TrimSuffix(name, ".json")
 	return name
+}
+
+func parseCodexTime(value string) (time.Time, error) {
+	if value == "" {
+		return time.Time{}, nil
+	}
+	if ts, err := time.Parse(time.RFC3339Nano, value); err == nil {
+		return ts, nil
+	}
+	return time.Parse(time.RFC3339, value)
+}
+
+func preferCodexAccount(existing, candidate CodexAccount) CodexAccount {
+	if existing.Token == "" && candidate.Token != "" {
+		return candidate
+	}
+	if existing.Token != "" && candidate.Token == "" {
+		return existing
+	}
+
+	if !existing.ExpiresAt.IsZero() || !candidate.ExpiresAt.IsZero() {
+		if existing.ExpiresAt.IsZero() {
+			return candidate
+		}
+		if candidate.ExpiresAt.IsZero() {
+			return existing
+		}
+		if candidate.ExpiresAt.After(existing.ExpiresAt) {
+			return candidate
+		}
+		if existing.ExpiresAt.After(candidate.ExpiresAt) {
+			return existing
+		}
+	}
+
+	if !existing.LastRefresh.IsZero() || !candidate.LastRefresh.IsZero() {
+		if existing.LastRefresh.IsZero() {
+			return candidate
+		}
+		if candidate.LastRefresh.IsZero() {
+			return existing
+		}
+		if candidate.LastRefresh.After(existing.LastRefresh) {
+			return candidate
+		}
+	}
+
+	return existing
 }
 
 // fetchAccountUsage fetches usage for a single account
@@ -333,9 +412,11 @@ func extractCodexAuthDetails(accessToken, idToken string) (string, []string) {
 	// not the API audience like access tokens do
 	clientID, scopes := extractFromToken(idToken)
 
-	// Fall back to access token if id_token doesn't have client_id
+	// Fall back to access token only for explicit client_id claim.
+	// Do NOT use aud from access tokens - it contains the API audience URL,
+	// not the OAuth client_id, which would cause refresh to fail.
 	if clientID == "" {
-		clientID, _ = extractFromToken(accessToken)
+		clientID = extractExplicitClientID(accessToken)
 	}
 
 	// Scopes can come from either token - use whichever has them
@@ -347,6 +428,19 @@ func extractCodexAuthDetails(accessToken, idToken string) (string, []string) {
 		clientID = codexDefaultClientID
 	}
 	return clientID, scopes
+}
+
+// extractExplicitClientID extracts only the explicit client_id claim from a token,
+// without falling back to aud (which may contain API audience URLs).
+func extractExplicitClientID(token string) string {
+	claims, err := decodeJWTClaims(token)
+	if err != nil {
+		return ""
+	}
+	if v, ok := claims["client_id"].(string); ok && v != "" {
+		return v
+	}
+	return ""
 }
 
 func extractFromToken(token string) (string, []string) {
