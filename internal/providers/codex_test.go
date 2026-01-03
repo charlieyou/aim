@@ -651,8 +651,8 @@ func TestCodexLoadNativeCredentials_ValidFile(t *testing.T) {
 	if !acc.IsNative {
 		t.Error("IsNative should be true")
 	}
-	if acc.DisplayName != "Codex (native)" {
-		t.Errorf("DisplayName = %q, want %q", acc.DisplayName, "Codex (native)")
+	if acc.DisplayName != "native" {
+		t.Errorf("DisplayName = %q, want %q", acc.DisplayName, "native")
 	}
 	if acc.AccountID != "acct-123" {
 		t.Errorf("AccountID = %q, want %q", acc.AccountID, "acct-123")
@@ -732,6 +732,43 @@ func TestCodexLoadNativeCredentials_MissingFile(t *testing.T) {
 	}
 	if accounts != nil {
 		t.Errorf("got %v accounts, want nil", accounts)
+	}
+}
+
+func TestCodexLoadNativeCredentials_MalformedJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	codexDir := filepath.Join(tmpDir, ".codex")
+	if err := os.MkdirAll(codexDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Invalid JSON (not valid JSON at all)
+	authData := `{not valid json}`
+	if err := os.WriteFile(filepath.Join(codexDir, "auth.json"), []byte(authData), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	provider := &CodexProvider{homeDir: tmpDir}
+	accounts, err := provider.loadNativeCredentials()
+	if err != nil {
+		t.Fatalf("loadNativeCredentials() error = %v", err)
+	}
+	if len(accounts) != 1 {
+		t.Fatalf("got %d accounts, want 1", len(accounts))
+	}
+
+	acc := accounts[0]
+	if acc.LoadErr == "" {
+		t.Error("LoadErr should be set for malformed JSON")
+	}
+	if !strings.Contains(acc.LoadErr, "failed to parse") {
+		t.Errorf("LoadErr should mention parse failure, got: %v", acc.LoadErr)
+	}
+	if acc.DisplayName != "native" {
+		t.Errorf("DisplayName = %q, want %q", acc.DisplayName, "native")
+	}
+	if !acc.IsNative {
+		t.Error("IsNative should be true")
 	}
 }
 

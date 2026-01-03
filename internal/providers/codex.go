@@ -107,10 +107,14 @@ func (c *CodexProvider) FetchUsage(ctx context.Context) ([]UsageRow, error) {
 	}
 
 	if len(accounts) == 0 {
+		warningMsg := "No credential files found matching ~/.cli-proxy-api/codex-*.json"
+		if DetectCredentialSource(c.homeDir) == SourceNative {
+			warningMsg = "No credentials found in ~/.codex/auth.json"
+		}
 		return []UsageRow{{
 			Provider:   "Codex",
 			IsWarning:  true,
-			WarningMsg: "No credential files found matching ~/.cli-proxy-api/codex-*.json",
+			WarningMsg: warningMsg,
 		}}, nil
 	}
 
@@ -189,7 +193,13 @@ func (c *CodexProvider) loadNativeCredentials() ([]CodexAccount, error) {
 
 	var creds codexNativeCredentials
 	if err := json.Unmarshal(data, &creds); err != nil {
-		return nil, nil
+		// Return account with LoadErr so caller can surface the parse error
+		return []CodexAccount{{
+			CredentialPath: path,
+			IsNative:       true,
+			DisplayName:    "native",
+			LoadErr:        fmt.Sprintf("failed to parse %s: %v", path, err),
+		}}, nil
 	}
 
 	if creds.Tokens.AccessToken == "" {
@@ -202,7 +212,7 @@ func (c *CodexProvider) loadNativeCredentials() ([]CodexAccount, error) {
 		RefreshToken:   creds.Tokens.RefreshToken,
 		CredentialPath: path,
 		IsNative:       true,
-		DisplayName:    "Codex (native)",
+		DisplayName:    "native",
 	}
 
 	// Extract expiry from JWT
