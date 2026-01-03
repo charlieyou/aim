@@ -33,6 +33,7 @@ type GeminiAccount struct {
 	TokenExpiry    time.Time
 	ProjectID      string
 	CredentialPath string
+	IsNative       bool
 }
 
 // GeminiProvider fetches usage data from Gemini (Google) quota API
@@ -140,11 +141,65 @@ func (g *GeminiProvider) FetchUsage(ctx context.Context) ([]UsageRow, error) {
 	return rows, nil
 }
 
-// loadCredentials discovers and loads credentials from ~/.cli-proxy-api/gemini-*.json files
+// nativeGeminiCred represents the structure of ~/.gemini/oauth_creds.json
+type nativeGeminiCred struct {
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	ExpiryDate   int64  `json:"expiry_date"`
+}
+
+// loadNativeCredentials loads credentials from ~/.gemini/oauth_creds.json
+func (g *GeminiProvider) loadNativeCredentials() ([]GeminiAccount, error) {
+	credPath := filepath.Join(g.homeDir, ".gemini", "oauth_creds.json")
+
+	data, err := os.ReadFile(credPath)
+	if err != nil {
+		// Silent return if file missing/unreadable
+		return nil, nil //nolint:nilerr
+	}
+
+	var cred nativeGeminiCred
+	if err := json.Unmarshal(data, &cred); err != nil {
+		return nil, nil //nolint:nilerr
+	}
+
+	if cred.AccessToken == "" {
+		return nil, nil
+	}
+
+	var tokenExpiry time.Time
+	if cred.ExpiryDate > 0 {
+		tokenExpiry = time.UnixMilli(cred.ExpiryDate)
+	}
+
+	account := GeminiAccount{
+		Email:          "Gemini (native)",
+		Token:          cred.AccessToken,
+		RefreshToken:   cred.RefreshToken,
+		ProjectID:      "",
+		TokenExpiry:    tokenExpiry,
+		IsNative:       true,
+		CredentialPath: credPath,
+	}
+
+	return []GeminiAccount{account}, nil
+}
+
+// loadCredentials discovers and loads credentials based on global credential source
 func (g *GeminiProvider) loadCredentials() ([]GeminiAccount, []string) {
 	var accounts []GeminiAccount
 	var warnings []string
 
+	source := DetectCredentialSource(g.homeDir)
+	if source == SourceNative {
+		nativeAccounts, err := g.loadNativeCredentials()
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("Failed to load native Gemini credentials: %v", err))
+		}
+		return nativeAccounts, warnings
+	}
+
+	// SourceProxy: load from ~/.cli-proxy-api/gemini-*.json
 	pattern := filepath.Join(g.homeDir, ".cli-proxy-api", "gemini-*.json")
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
@@ -311,6 +366,9 @@ func (g *GeminiProvider) accessTokenForAccount(ctx context.Context, account Gemi
 }
 
 func (g *GeminiProvider) refreshAccessToken(ctx context.Context, account GeminiAccount) (string, error) {
+	if account.IsNative {
+		return "", fmt.Errorf("token expired. Re-authenticate with gemini to refresh")
+	}
 	if account.RefreshToken == "" || account.ClientID == "" {
 		return "", fmt.Errorf("refresh token not available")
 	}

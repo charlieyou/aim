@@ -850,3 +850,205 @@ func TestNewGeminiProvider(t *testing.T) {
 		t.Error("homeDir should not be empty")
 	}
 }
+
+func TestGeminiLoadNativeCredentials_ValidFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	geminiDir := filepath.Join(tmpDir, ".gemini")
+	if err := os.MkdirAll(geminiDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cred := `{"access_token": "ya29.native-token", "refresh_token": "1//refresh", "expiry_date": 1767454704529}`
+	if err := os.WriteFile(filepath.Join(geminiDir, "oauth_creds.json"), []byte(cred), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &GeminiProvider{homeDir: tmpDir}
+	accounts, err := p.loadNativeCredentials()
+	if err != nil {
+		t.Fatalf("loadNativeCredentials() error = %v", err)
+	}
+	if len(accounts) != 1 {
+		t.Fatalf("expected 1 account, got %d", len(accounts))
+	}
+
+	acc := accounts[0]
+	if acc.Email != "Gemini (native)" {
+		t.Errorf("Email = %q, want %q", acc.Email, "Gemini (native)")
+	}
+	if acc.Token != "ya29.native-token" {
+		t.Errorf("Token = %q, want %q", acc.Token, "ya29.native-token")
+	}
+	if acc.RefreshToken != "1//refresh" {
+		t.Errorf("RefreshToken = %q, want %q", acc.RefreshToken, "1//refresh")
+	}
+	if acc.ProjectID != "" {
+		t.Errorf("ProjectID = %q, want empty", acc.ProjectID)
+	}
+	if !acc.IsNative {
+		t.Error("IsNative should be true")
+	}
+}
+
+func TestGeminiLoadNativeCredentials_ExpiryDate(t *testing.T) {
+	tmpDir := t.TempDir()
+	geminiDir := filepath.Join(tmpDir, ".gemini")
+	if err := os.MkdirAll(geminiDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// expiry_date: 1767454704529 ms = 2026-01-03 08:18:24.529 UTC
+	cred := `{"access_token": "ya29.token", "expiry_date": 1767454704529}`
+	if err := os.WriteFile(filepath.Join(geminiDir, "oauth_creds.json"), []byte(cred), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &GeminiProvider{homeDir: tmpDir}
+	accounts, err := p.loadNativeCredentials()
+	if err != nil {
+		t.Fatalf("loadNativeCredentials() error = %v", err)
+	}
+	if len(accounts) != 1 {
+		t.Fatalf("expected 1 account, got %d", len(accounts))
+	}
+
+	expected := time.UnixMilli(1767454704529)
+	if !accounts[0].TokenExpiry.Equal(expected) {
+		t.Errorf("TokenExpiry = %v, want %v", accounts[0].TokenExpiry, expected)
+	}
+}
+
+func TestGeminiLoadNativeCredentials_MissingExpiry(t *testing.T) {
+	tmpDir := t.TempDir()
+	geminiDir := filepath.Join(tmpDir, ".gemini")
+	if err := os.MkdirAll(geminiDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cred := `{"access_token": "ya29.token"}`
+	if err := os.WriteFile(filepath.Join(geminiDir, "oauth_creds.json"), []byte(cred), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	p := &GeminiProvider{homeDir: tmpDir}
+	accounts, err := p.loadNativeCredentials()
+	if err != nil {
+		t.Fatalf("loadNativeCredentials() error = %v", err)
+	}
+	if len(accounts) != 1 {
+		t.Fatalf("expected 1 account, got %d", len(accounts))
+	}
+
+	if !accounts[0].TokenExpiry.IsZero() {
+		t.Errorf("TokenExpiry = %v, want zero time", accounts[0].TokenExpiry)
+	}
+}
+
+func TestGeminiLoadNativeCredentials_MissingFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	p := &GeminiProvider{homeDir: tmpDir}
+	accounts, err := p.loadNativeCredentials()
+	if err != nil {
+		t.Fatalf("loadNativeCredentials() error = %v", err)
+	}
+	if accounts != nil {
+		t.Errorf("expected nil accounts for missing file, got %v", accounts)
+	}
+}
+
+func TestGeminiLoadCredentials_UsesGlobalSource(t *testing.T) {
+	tests := []struct {
+		name           string
+		setupProxy     bool
+		setupNative    bool
+		expectNative   bool
+		expectAccounts int
+	}{
+		{
+			name:           "proxy creds exist - use proxy",
+			setupProxy:     true,
+			setupNative:    true,
+			expectNative:   false,
+			expectAccounts: 1,
+		},
+		{
+			name:           "only native creds - use native",
+			setupProxy:     false,
+			setupNative:    true,
+			expectNative:   true,
+			expectAccounts: 1,
+		},
+		{
+			name:           "no creds - returns native empty",
+			setupProxy:     false,
+			setupNative:    false,
+			expectNative:   true,
+			expectAccounts: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+
+			if tt.setupProxy {
+				proxyDir := filepath.Join(tmpDir, ".cli-proxy-api")
+				if err := os.MkdirAll(proxyDir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				// filename format: gemini-{email}-{project_id}.json
+				proxyCred := `{"token":{"access_token":"proxy-token","client_id":"id","refresh_token":"rt"},"project_id":"proj-123"}`
+				if err := os.WriteFile(filepath.Join(proxyDir, "gemini-test@example.com-proj-123.json"), []byte(proxyCred), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if tt.setupNative {
+				geminiDir := filepath.Join(tmpDir, ".gemini")
+				if err := os.MkdirAll(geminiDir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				nativeCred := `{"access_token":"native-token"}`
+				if err := os.WriteFile(filepath.Join(geminiDir, "oauth_creds.json"), []byte(nativeCred), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			p := &GeminiProvider{homeDir: tmpDir}
+			accounts, _ := p.loadCredentials()
+
+			if len(accounts) != tt.expectAccounts {
+				t.Errorf("expected %d accounts, got %d", tt.expectAccounts, len(accounts))
+				return
+			}
+
+			if tt.expectAccounts > 0 {
+				if accounts[0].IsNative != tt.expectNative {
+					t.Errorf("IsNative = %v, want %v", accounts[0].IsNative, tt.expectNative)
+				}
+			}
+		})
+	}
+}
+
+func TestGeminiRefreshAccessToken_NativeSkip(t *testing.T) {
+	p := &GeminiProvider{
+		homeDir: t.TempDir(),
+		client:  &http.Client{},
+	}
+
+	account := GeminiAccount{
+		Email:        "Gemini (native)",
+		Token:        "ya29.expired",
+		RefreshToken: "1//refresh",
+		IsNative:     true,
+	}
+
+	_, err := p.refreshAccessToken(context.Background(), account)
+	if err == nil {
+		t.Fatal("expected error for native account refresh")
+	}
+	if !strings.Contains(err.Error(), "Re-authenticate with gemini") {
+		t.Errorf("error = %q, want message about re-authentication", err.Error())
+	}
+}
