@@ -153,10 +153,13 @@ Accept: application/json
 
 ### Token Refresh
 ```
-POST https://token.oaifree.com/api/auth/refresh
+POST https://auth.openai.com/oauth/token
 Content-Type: application/x-www-form-urlencoded
 
+grant_type=refresh_token
 refresh_token={refreshToken}
+client_id={clientId}
+scope=openid email profile offline_access   # optional
 ```
 
 ---
