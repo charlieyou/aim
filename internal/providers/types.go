@@ -7,6 +7,14 @@ import (
 	"unicode/utf8"
 )
 
+// Version is the current version of aim, used in User-Agent headers.
+const Version = "0.1.1"
+
+// UserAgent returns the User-Agent string for HTTP requests.
+func UserAgent() string {
+	return "ai-meter/" + Version
+}
+
 // UsageRow represents a single row in the output table
 type UsageRow struct {
 	Provider     string    // e.g., "Claude (user@example.com)", "Codex (user@example.com)", "Gemini (user@example.com)"

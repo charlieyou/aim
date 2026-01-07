@@ -55,8 +55,8 @@ func TestCodexProvider_FetchUsage_SingleAccount(t *testing.T) {
 		if accept := r.Header.Get("Accept"); accept != "application/json" {
 			t.Errorf("unexpected Accept: %s", accept)
 		}
-		if ua := r.Header.Get("User-Agent"); ua != "ai-meter/0.1.0" {
-			t.Errorf("unexpected User-Agent: %s", ua)
+		if ua := r.Header.Get("User-Agent"); ua != UserAgent() {
+			t.Errorf("expected User-Agent %q, got %q", UserAgent(), ua)
 		}
 
 		resp := codexAPIResponse{

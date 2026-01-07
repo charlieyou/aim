@@ -362,7 +362,7 @@ func (c *ClaudeProvider) refreshAccessToken(ctx context.Context, creds claudeAut
 		return "", fmt.Errorf("failed to create refresh request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "ai-meter/0.1.0")
+	req.Header.Set("User-Agent", UserAgent())
 
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -431,7 +431,7 @@ func (c *ClaudeProvider) fetchUsageFromAPI(ctx context.Context, token string) (*
 
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "ai-meter/0.1.0")
+	req.Header.Set("User-Agent", UserAgent())
 	req.Header.Set("anthropic-beta", claudeAnthropicBeta)
 
 	resp, err := c.client.Do(req)
@@ -460,6 +460,14 @@ func (c *ClaudeProvider) fetchUsageFromAPI(ctx context.Context, token string) (*
 // parseUsageResponse converts the API response to UsageRows
 func (c *ClaudeProvider) parseUsageResponse(resp *claudeUsageResponse, providerName string) []UsageRow {
 	var rows []UsageRow
+
+	if resp.FiveHour == nil && resp.SevenDay == nil {
+		return []UsageRow{{
+			Provider:   providerName,
+			IsWarning:  true,
+			WarningMsg: "no usage quota (free tier or inactive)",
+		}}
+	}
 
 	if resp.FiveHour != nil {
 		resetTime, err := parseClaudeResetTime(resp.FiveHour.ResetsAt)

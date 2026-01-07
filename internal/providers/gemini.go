@@ -487,7 +487,7 @@ func (g *GeminiProvider) doQuotaRequest(ctx context.Context, account GeminiAccou
 
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("User-Agent", "ai-meter/0.1.0")
+	req.Header.Set("User-Agent", UserAgent())
 
 	resp, err := g.client.Do(req)
 	if err != nil {

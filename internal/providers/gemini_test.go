@@ -37,8 +37,8 @@ func TestGeminiProvider_FetchUsage_SingleAccount(t *testing.T) {
 		if r.Header.Get("Content-Type") != "application/json" {
 			t.Errorf("Expected Content-Type application/json, got %s", r.Header.Get("Content-Type"))
 		}
-		if r.Header.Get("User-Agent") != "ai-meter/0.1.0" {
-			t.Errorf("Expected User-Agent ai-meter/0.1.0, got %s", r.Header.Get("User-Agent"))
+		if r.Header.Get("User-Agent") != UserAgent() {
+			t.Errorf("expected User-Agent %q, got %q", UserAgent(), r.Header.Get("User-Agent"))
 		}
 
 		// Return mock response

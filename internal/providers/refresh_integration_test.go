@@ -82,7 +82,7 @@ func TestGeminiRefreshIntegration(t *testing.T) {
 		t.Skipf("Failed to create provider: %v", err)
 	}
 
-	accounts, _ := provider.loadCredentials()
+	accounts, _, _ := provider.loadCredentials()
 
 	var account *GeminiAccount
 	for i := range accounts {

@@ -454,7 +454,7 @@ func (c *CodexProvider) fetchUsageWithToken(ctx context.Context, token string) (
 
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "ai-meter/0.1.0")
+	req.Header.Set("User-Agent", UserAgent())
 
 	resp, err := c.client.Do(req)
 	if err != nil {
